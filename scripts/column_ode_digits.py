@@ -6,6 +6,10 @@ from pprint import pprint
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
 
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import TensorDataset, DataLoader
+
 from torchdiffeq import odeint, odeint_adjoint
 from torchsde import sdeint, sdeint_adjoint
 
@@ -42,12 +46,19 @@ def visualize_weights(network, train_iter):
             # plt.savefig('../results/png/{}_{:02d}'.format(clean_name, train_iter + 1))
             # plt.close(fig)
 
-def prepare_ds():
+def prepare_ds(digits_to_include):
+
+    # Load dataset
     digits = datasets.load_digits()
 
     # Images and labels
     X = digits.images  # shape: (n_samples, 8, 8)
     y = digits.target
+
+    # Only data instances with a label in digits_to_include
+    mask = np.isin(y, digits_to_include)
+    X = X[mask]
+    y = y[mask]
 
     # Flatten the images
     n_samples = len(X)
@@ -55,7 +66,7 @@ def prepare_ds():
 
     # Train/test split
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.5, shuffle=False
+        X, y, test_size=0.5, shuffle=True
     )
 
     # Convert to torch tensors
@@ -64,6 +75,10 @@ def prepare_ds():
     y_train = torch.tensor(y_train, dtype=torch.long)
     y_test = torch.tensor(y_test, dtype=torch.long)
 
+    # # One hot encode the labels
+    # y_train = nn.functional.one_hot(y_train, len(digits_to_include)).to(torch.float32)
+    # y_test = nn.functional.one_hot(y_test, len(digits_to_include)).to(torch.float32)
+
     return X_train, X_test, y_train, y_test
 
 def init_network(nr_inputs, device):
@@ -71,11 +86,15 @@ def init_network(nr_inputs, device):
 
     # network_input = {'nr_areas': 4,
     #                  'areas': ['v1', 'v2', 'v4', 'pitv'],
-    #                  'nr_columns_per_area': [36, 4, 2, 1],
+    #                  'nr_columns_per_area': [144, 64, 16, 8],
     #                  'nr_input_units': nr_inputs}
-    network_input = {'nr_areas': 1,
-                     'areas': ['v1'],
-                     'nr_columns_per_area': [36],
+    # network_input = {'nr_areas': 4,
+    #                  'areas': ['v1', 'v2', 'v4', 'pitv'],
+    #                  'nr_columns_per_area': [72, 32, 8, 4],
+    #                  'nr_input_units': nr_inputs}
+    network_input = {'nr_areas': 4,
+                     'areas': ['v1', 'v2', 'v4', 'pitv'],
+                     'nr_columns_per_area': [36, 16, 4, 4],
                      'nr_input_units': nr_inputs}
     network = ColumnNetwork(col_params, network_input, device)
     num_columns = sum(network_input['nr_columns_per_area'])
@@ -95,35 +114,70 @@ def init_network(nr_inputs, device):
     network.time_vec = time_vec
     return network, time_vec, initial_state
 
-def train_digit_classification(device):
+def train_digit_classification(device, batch_size=16, nr_epochs=50):
 
     # Get train and test set
-    X_train, X_test, y_train, y_test = prepare_ds()
+    digits_to_include = [0, 1, 2, 3]
+    X_train, X_test, y_train, y_test = prepare_ds(digits_to_include)
     nr_inputs = X_train.shape[1]
+
+    # DataLoaders
+    train_ds = TensorDataset(X_train, y_train)
+    test_ds = TensorDataset(X_test, y_test)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=True)
 
     # Initialize the network and associated variables
     network, time_vec, initial_state = init_network(nr_inputs, device)
     # visualize_weights(network, 0)
 
-    # Training loop should start here
+    # Training
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(network.parameters(), lr=0.0001)
 
-    stim_idx = 0
-    stim_as_image = X_train[stim_idx].reshape((8, 8))
-    stim_label = y_train[stim_idx]
+    # Training loop
+    for epoch in range(nr_epochs):
 
-    # Set image as stimulus
-    network.stim = X_train[stim_idx]
+        for stims, labels in train_loader:
+            model_predictions = torch.zeros(batch_size, len(digits_to_include))
 
-    ode_output = odeint(network, initial_state, time_vec)
+            for stim_idx, stim in enumerate(stims):
 
-    mem_adap_split = ode_output.shape[-1] // 2
-    firing_rates = compute_firing_rate(ode_output[:, :, :mem_adap_split] - ode_output[:, :, mem_adap_split:])
-    firing_rates = firing_rates.squeeze(1).detach().numpy()
+                stim_as_image = stim.reshape((8, 8))
 
-    for i in range(firing_rates.shape[-1]):
-        print(i)
-        plt.plot(firing_rates[:, i])
-        plt.show()
+                # Set image as stimulus
+                network.stim = stim
+
+                # Run the network and compute the firing rates
+                ode_output = odeint(network, initial_state, time_vec)
+                mem_adap_split = ode_output.shape[-1] // 2
+                firing_rates = compute_firing_rate(ode_output[:, :, :mem_adap_split] - ode_output[:, :, mem_adap_split:])
+                # # Plot firing rates
+                # firing_rates = firing_rates.squeeze(1).detach().numpy()
+                # col_idx = 0 # (288+128)*2
+                # for i in range(col_idx, firing_rates.shape[-1]):
+                #     print(i - col_idx)
+                #     plt.plot(firing_rates[:, i])
+                #     plt.show()
+
+                # Get the firing rates from the final area columns
+                size_last_area = network.nr_columns_per_area[-1]
+                num_pops_last_area = size_last_area * 8  # 8 populations
+
+                firing_rates_last_area = firing_rates[-1, 0, -num_pops_last_area:]
+                firing_rates_last_area_L5 = firing_rates_last_area * network.output_weights
+                separate_final_columns = torch.tensor_split(firing_rates_last_area_L5, size_last_area)
+
+                for column_idx, column in enumerate(separate_final_columns):
+                    model_predictions[stim_idx, column_idx] = torch.sum(column)
+
+            # Compute loss and backprop
+            loss = criterion(model_predictions, labels)
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            # Evaluate
 
 
 
