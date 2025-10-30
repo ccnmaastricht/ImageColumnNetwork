@@ -214,7 +214,7 @@ class ColumnNetwork(torch.nn.Module):
         self.feedforward_mask = torch.tensor(masks['feedforward'])
         self.feedback_mask = torch.tensor(masks['feedback'])
 
-    def make_receptive_fields_v1(self, fully_connected_input_mask, receptive_field_size=3, stride=1):
+    def make_receptive_fields_v1_vanilla(self, fully_connected_input_mask, receptive_field_size=3, stride=1):
 
         num_input_pops, len_input_image = fully_connected_input_mask.shape
         num_input_cols = num_input_pops // 8  # eight populations = 1 column
@@ -255,6 +255,45 @@ class ColumnNetwork(torch.nn.Module):
         # Extent receptive field mask from x_shape=nr_columns to x_shape=nr_populations
         receptive_field_mask_extended = receptive_field_mask.repeat_interleave(8, dim=0)
 
+        return receptive_field_mask_extended * fully_connected_input_mask
+
+    def make_receptive_fields_v1_hori_verti(self, fully_connected_input_mask, receptive_field_size=3, stride=1):
+
+        num_input_pops, len_input_image = fully_connected_input_mask.shape
+        num_input_cols = num_input_pops // 8  # eight populations = 1 column
+        shape_input_image = int(np.sqrt(len_input_image))  # assumes the image shape is perfectly square (x_shape==y_shape)
+
+        # Determine how many receptive fields we can have, given the image shape, receptive field size and stride
+        nr_receptive_fields = ((shape_input_image - receptive_field_size + 1) // stride)**2
+        # Then, determine how many columns will receive the identical receptive field
+        nr_cols_per_receptive_field = num_input_cols // nr_receptive_fields
+
+        # All receptive fields should have the exact same number of target columns
+        assert num_input_cols % nr_receptive_fields == 0, \
+            f"The number of columns in the first area ({num_input_cols}) can not be divided by the number of receptive fields ({nr_receptive_fields})."
+
+        # Loop through the image indices to fill in the receptive field mask
+        receptive_field_mask = torch.zeros(num_input_cols, len_input_image)
+
+        col_idx = 0
+        end = shape_input_image - receptive_field_size + 1
+
+        for i in range(0, end, stride):
+            for j in range(0, end, stride):
+
+                # Hyper column: one horizontal and one vertical column
+                image = torch.zeros(shape_input_image, shape_input_image)
+                image[(i+1) : (i-1) + receptive_field_size, j:j + receptive_field_size] = 1.0  # horizontal
+                receptive_field_mask[col_idx, :] = image.flatten()
+                col_idx += 1
+
+                image = torch.zeros(shape_input_image, shape_input_image)
+                image[i:i + receptive_field_size, (j+1) : (j-1) + receptive_field_size] = 1.0  # vertical
+                receptive_field_mask[col_idx, :] = image.flatten()
+                col_idx += 1
+
+        # Extent receptive field mask from x_shape=nr_columns to x_shape=nr_populations
+        receptive_field_mask_extended = receptive_field_mask.repeat_interleave(8, dim=0)
         return receptive_field_mask_extended * fully_connected_input_mask
 
     def make_receptive_fields_v2(self, fully_connected_mask, receptive_field_size=3, stride=1, nr_source_cols_same_rf=1):
@@ -307,17 +346,18 @@ class ColumnNetwork(torch.nn.Module):
         input_init = torch.tensor(model_parameters['connection_inits']['input'])
         input_init = torch.tile(input_init, (size_target, size_source))
 
-        std_W = 10.0
+        std_W = 1.0
         rand_input_weights = abs(torch.normal(mean=input_init, std=std_W))
-        rand_input_weights = rand_input_weights * first_area.baseline_synaptic_strength * 0.5
+        # rand_input_weights = rand_input_weights * first_area.baseline_synaptic_strength * 0.5
+        rand_input_weights = input_init * first_area.baseline_synaptic_strength * 0.7
 
         input_mask = torch.tile(self.input_mask, (size_target, size_source))
         # Make 3x3 receptive fields
-        input_mask = self.make_receptive_fields_v1(input_mask)
+        input_mask = self.make_receptive_fields_v1_hori_verti(input_mask)
         first_area.input_mask = input_mask
 
         rand_input_weights = rand_input_weights * input_mask
-        first_area.input_weights = nn.Parameter(rand_input_weights, requires_grad=True)
+        first_area.input_weights = nn.Parameter(rand_input_weights, requires_grad=False) # NOT TRAINING NOW
 
     def _initialize_feedforward_weights(self, model_parameters):
         '''
@@ -333,18 +373,20 @@ class ColumnNetwork(torch.nn.Module):
                 ff_init = torch.tensor(model_parameters['connection_inits']['feedforward'])
                 ff_init = torch.tile(ff_init, (size_target, size_source))
 
-                std_W = 10.0
+                std_W = 1.0
                 rand_ff_weights = abs(torch.normal(mean=ff_init, std=std_W))
-                rand_ff_weights = rand_ff_weights * area.baseline_synaptic_strength * 5.0
+                # rand_ff_weights = rand_ff_weights * area.baseline_synaptic_strength * 5.0  # if smaller receptive fields
+                rand_ff_weights = rand_ff_weights * area.baseline_synaptic_strength
 
                 ff_mask = torch.tile(self.feedforward_mask, (size_target, size_source))
-                # TODO: the number of source columns with the same receptive field should not be hardcoded
-                if area_idx == '1' or area_idx == '2':
-                    # Make 3x3 receptive fields
-                    ff_mask = self.make_receptive_fields_v2(ff_mask, nr_source_cols_same_rf=1)
-                elif area_idx == '4':
-                    # Make 2x2 receptive fields
-                    ff_mask = self.make_receptive_fields_v2(ff_mask, receptive_field_size=2, nr_source_cols_same_rf=1)
+                # # If entire ventral stream
+                # # PS: the number of source columns with the same receptive field should not be hardcoded
+                # if area_idx == '1' or area_idx == '2':
+                #     # Make 3x3 receptive fields
+                #     ff_mask = self.make_receptive_fields_v2(ff_mask, nr_source_cols_same_rf=1)
+                # elif area_idx == '4':
+                #     # Make 2x2 receptive fields
+                #     ff_mask = self.make_receptive_fields_v2(ff_mask, receptive_field_size=2, nr_source_cols_same_rf=1)
                 area.feedforward_mask = ff_mask
 
                 rand_ff_weights = rand_ff_weights * ff_mask
@@ -372,7 +414,7 @@ class ColumnNetwork(torch.nn.Module):
                 area.feedback_mask = fb_mask
 
                 rand_fb_weights = rand_fb_weights * fb_mask
-                area.feedback_weights = nn.Parameter(rand_fb_weights, requires_grad=False) # NO TRAINING
+                area.feedback_weights = nn.Parameter(rand_fb_weights, requires_grad=False) # NOT TRAINING NOW
 
     def _initialize_output_weights(self, model_parameters):
         '''
