@@ -68,7 +68,8 @@ def visualize_feature_maps_and_weights(network, firing_rates, labels, epoch):
         }
 
         for name, fmap in feature_maps.items():
-            plt.imshow(fmap.detach().numpy(), cmap="magma", interpolation="nearest")  # inferno, magma
+            heatmap = plt.imshow(fmap.detach().numpy(), cmap="magma", interpolation="nearest", vmin=0.0, vmax=50.0)  # inferno, magma
+            plt.colorbar(heatmap)
             plt.savefig('../results/png/epoch_{:02d}_label_{:1d}_{}_{:02d}'.format(epoch, labels[stim_idx], name, stim_idx))
             plt.close()
 
@@ -102,10 +103,12 @@ def prepare_ds(digits_to_include):
     return X_train, X_test, y_train, y_test
 
 def mask_weights(network):
-    # Only masks feedforward weights now
 
     for area_idx in range(1, network.nr_areas):  # feedforward weights, skip first area
         network.areas[str(area_idx)].feedforward_weights.grad *= network.areas[str(area_idx)].feedforward_mask
+
+    for area_idx in range(network.nr_areas):  # lateral weights
+        network.areas[str(area_idx)].lateral_weights.grad *= network.areas[str(area_idx)].lateral_mask
 
 def init_network(nr_inputs, device):
     col_params = load_config('../config/model_params.toml')
@@ -221,7 +224,10 @@ def train_digit_classification(device, batch_size=16, nr_epochs=50):
 
             # Clamp the weights to ensure the weights are not below zero after updating (or are not higher than zero)
             for name, param in network.named_parameters():
-                param.data.clamp_(min=0.0)  # weights can not be negative
+                if 'lateral' in name:
+                    param.data.clamp_(max=0.0)  # lateral inhibition weights can not be positive
+                if 'lateral' not in name:
+                    param.data.clamp_(min=0.0)  # other weights can not be negative
 
         # Evaluate with test set, after every epoch
         with torch.no_grad():
@@ -231,6 +237,8 @@ def train_digit_classification(device, batch_size=16, nr_epochs=50):
 
             test_loss = criterion(model_predictions, y_test)
             print('Test loss {:.5f}'.format(test_loss.item()))
+            test_acc = (y_test == torch.argmax(model_predictions, dim=1)).float().mean()
+            print('Test accuracy {:.2f}'.format(test_acc))
 
             print('Model predictions and true labels')
             print(torch.concat((model_predictions, y_test.unsqueeze(1)), dim=-1))

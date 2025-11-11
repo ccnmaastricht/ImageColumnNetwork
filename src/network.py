@@ -87,29 +87,6 @@ class ColumnArea(torch.nn.Module):
         log_denominator = np.log(1 - 1 / np.array(np.outer(self.population_sizes, self.population_sizes)))
 
         recurrent_synapse_counts = log_numerator / log_denominator / self.population_sizes[:, None]
-
-        ###
-        # if self.area == 'v1':
-        #     recurrent_synapse_counts = torch.tensor(
-        #      [[1.06661110e+03, 5.16861829e+02, 4.81996932e+02, 2.27759242e+02,
-        #        7.72398867e+01, 0.00000000e+00, 5.68188602e+01, 0.00000000e+00],
-        #       [1.44437444e+03, 4.13767549e+02, 3.49012875e+02, 1.42833235e+02,
-        #        1.83919249e+02, 0.00000000e+00, 2.83687652e+01, 0.00000000e+00],
-        #       [8.16383959e+01, 1.72582721e+01, 5.48929958e+02, 3.82619919e+02,
-        #        1.67446254e+01, 1.57209228e-01, 3.23916652e+02, 0.00000000e+00],
-        #       [7.19973818e+02, 8.61987590e+00, 8.76681242e+02, 4.57928356e+02,
-        #        7.16596950e+00, 0.00000000e+00, 7.80572989e+02, 0.00000000e+00],
-        #       [1.05565026e+03, 1.82005569e+02, 5.60114291e+02, 1.62081649e+01,
-        #        2.04147244e+02, 2.27189001e+02, 1.42660999e+02, 0.00000000e+00],
-        #       [5.70926689e+02, 7.82517276e+01, 2.82956909e+02, 5.39528515e+00,
-        #        1.46318267e+02, 1.87594402e+02, 6.39442403e+01, 0.00000000e+00],
-        #       [1.63746274e+02, 2.01418588e+01, 2.28129308e+02, 4.61046005e+01,
-        #        1.38848435e+02, 1.05546123e+01, 2.87400068e+02, 3.55681242e+02],
-        #       [3.71105876e+02, 2.87121538e+00, 3.23799664e+01, 2.69653534e+00,
-        #        6.74869083e+01, 4.20379463e+00, 4.78768959e+02, 2.20364727e+02]])
-        #     recurrent_synapse_counts = torch.tile(recurrent_synapse_counts, (self.num_columns, self.num_columns))
-        # sum_target_counts = torch.sum(recurrent_synapse_counts, dim=1)
-
         self.recurrent_synapse_counts = torch.tensor(recurrent_synapse_counts, dtype=torch.float32)
 
     def _build_recurrent_synaptic_strength_matrix(self):
@@ -213,7 +190,9 @@ class ColumnNetwork(torch.nn.Module):
         self.output_mask = torch.tensor(masks['output'])
         self.feedforward_mask = torch.tensor(masks['feedforward'])
         self.feedback_mask = torch.tensor(masks['feedback'])
+        self.lateral_mask = torch.tensor(masks['lateral'])
 
+    # Not in use right now
     def make_receptive_fields_v1_vanilla(self, fully_connected_input_mask, receptive_field_size=3, stride=1):
 
         num_input_pops, len_input_image = fully_connected_input_mask.shape
@@ -296,6 +275,7 @@ class ColumnNetwork(torch.nn.Module):
         receptive_field_mask_extended = receptive_field_mask.repeat_interleave(8, dim=0)
         return receptive_field_mask_extended * fully_connected_input_mask
 
+    # Not in use right now
     def make_receptive_fields_v2(self, fully_connected_mask, receptive_field_size=3, stride=1, nr_source_cols_same_rf=1):
 
         num_target_pops, num_source_pops = fully_connected_mask.shape
@@ -392,6 +372,7 @@ class ColumnNetwork(torch.nn.Module):
                 rand_ff_weights = rand_ff_weights * ff_mask
                 area.feedforward_weights = nn.Parameter(rand_ff_weights, requires_grad=True)
 
+    # Not in use right now
     def _initialize_feedback_weights(self, model_parameters):
         '''
         Initialize the feedback weights between each set of areas as learnable weights.
@@ -439,6 +420,25 @@ class ColumnNetwork(torch.nn.Module):
             area.inner_weights = area.recurrent_weights * area.internal_mask  # set any existing external connectivity to zero
             area.inner_weights = area.inner_weights.to(self.device)
 
+            # Initialize weights as zero
+            lateral_init = torch.zeros((area.num_populations, area.num_populations))
+            lateral_init = lateral_init.to(self.device)
+
+            # Reshape lateral mask
+            lateral_mask = torch.tile(self.lateral_mask, (area.num_columns, area.num_columns)) * area.external_mask
+
+            # First area gets lateral weights between each pair of filters with the same receptive field
+            if area_idx == '0':
+                # Make lateral mask follow hyper-column organization
+                n = area.num_populations
+                block = 8 * 2  # two columns in one hyper-column
+                lateral_hyper_column_mask = torch.eye(n // block).repeat_interleave(block, dim=0).repeat_interleave(block, dim=1)
+                lateral_mask = lateral_mask * lateral_hyper_column_mask
+
+            # Store mask and weights in area
+            area.lateral_mask = lateral_mask
+            area.lateral_weights = nn.Parameter(lateral_init, requires_grad=True)
+
     def set_time_vec(self, time_vec):
         '''
         Set the time_vec as a mutable attribute. This is necessary because
@@ -481,31 +481,28 @@ class ColumnNetwork(torch.nn.Module):
             feedforward_current = torch.zeros(area.num_populations).to(self.device)
             if area_idx == '0':
                 feedforward_current = torch.matmul(area.input_weights, ext_ff_rate)
-                # if t > 0.55:
-                #     input_weights = torch.tensor(area.input_weights)
-                #     feedforward_current = torch.tensor(feedforward_current)
-                #     blep = 0
             elif area_idx > '0':  # subsequent areas receive previous area's firing rate
                 idx_prev_area = str(int(area_idx) - 1)
                 prev_area_fr = fr_per_area[idx_prev_area]
                 feedforward_current = torch.matmul(area.feedforward_weights, prev_area_fr)
 
-            # Compute feedback current
-            feedback_current = torch.zeros(area.num_populations).to(self.device)
-            if int(area_idx) < (len(self.areas) - 1):  # only last area has no fb weights, so skip that one
-                key_next_area = str(int(area_idx) + 1)
-                next_area_fr = fr_per_area[key_next_area]
-                feedback_current = torch.matmul(area.feedback_weights, next_area_fr)
+            # # Compute feedback current
+            # feedback_current = torch.zeros(area.num_populations).to(self.device)
+            # if int(area_idx) < (len(self.areas) - 1):  # only last area has no fb weights, so skip that one
+            #     key_next_area = str(int(area_idx) + 1)
+            #     next_area_fr = fr_per_area[key_next_area]
+            #     feedback_current = torch.matmul(area.feedback_weights, next_area_fr)
 
             # Compute recurrent current
             recurrent_current = torch.matmul(area.inner_weights, fr_per_area[area_idx])
+            lateral_current = torch.matmul(area.lateral_weights, fr_per_area[area_idx])
 
             # Background current
             background_current = area.background_weights * area.background_drive
 
             # Total current of this area
             total_current_area = (feedforward_current +
-                                   # feedback_current +
+                                  lateral_current +
                                   recurrent_current +
                                   background_current) * area.synapse_time_constant
             total_current = torch.cat((total_current, total_current_area), dim=0)
