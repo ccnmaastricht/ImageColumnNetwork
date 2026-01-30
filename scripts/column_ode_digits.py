@@ -3,6 +3,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pprint import pprint
 import pickle
+import random
 
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
@@ -38,47 +39,51 @@ def visualize_feature_maps_and_weights(network, firing_rates, labels, epoch):
             plt.savefig('../results/png/{}_epoch_{:02d}'.format(clean_name, epoch))
             plt.close(fig)
 
-    # Feature maps
-    for stim_idx in range(firing_rates.shape[0]):
-        firing_rates_v1 = firing_rates[stim_idx, 500:, :576]
-        firing_rates_v1_mean = torch.mean(firing_rates_v1, dim=0)
+    # # Feature maps
+    # for stim_idx in range(firing_rates.shape[0]):
+    #     firing_rates_v1 = firing_rates[stim_idx, 500:, :576]
+    #     firing_rates_v1_mean = torch.mean(firing_rates_v1, dim=0)
+    #
+    #     input_current_v2 = network.areas['1'].feedforward_weights * firing_rates_v1_mean
+    #     column_0 = torch.sum(input_current_v2[:8, :], dim=0)
+    #     column_1 = torch.sum(input_current_v2[8:, :], dim=0)
+    #
+    #     def sum_over_source_columns(x):
+    #         x_grouped = x.view(-1, 8)
+    #         return torch.sum(x_grouped, dim=1)
+    #
+    #     column_0 = sum_over_source_columns(column_0)
+    #     column_1 = sum_over_source_columns(column_1)
+    #
+    #     column_0_horizontal = column_0[::2].reshape((6, 6))
+    #     column_0_vertical = column_0[1::2].reshape((6, 6))
+    #
+    #     column_1_horizontal = column_1[::2].reshape((6, 6))
+    #     column_1_vertical = column_1[1::2].reshape((6, 6))
+    #
+    #     feature_maps = {
+    #         "col_0_horizontal": column_0_horizontal,
+    #         "col_0_vertical": column_0_vertical,
+    #         "col_1_horizontal": column_1_horizontal,
+    #         "col_1_vertical": column_1_vertical,
+    #     }
+    #
+    #     for name, fmap in feature_maps.items():
+    #         heatmap = plt.imshow(fmap.detach().numpy(), cmap="magma", interpolation="nearest", vmin=0.0, vmax=50.0)  # inferno, magma
+    #         plt.colorbar(heatmap)
+    #         plt.savefig('../results/png/epoch_{:02d}_label_{:1d}_{}_{:02d}'.format(epoch, labels[stim_idx], name, stim_idx))
+    #         plt.close()
 
-        input_current_v2 = network.areas['1'].feedforward_weights * firing_rates_v1_mean
-        column_0 = torch.sum(input_current_v2[:8, :], dim=0)
-        column_1 = torch.sum(input_current_v2[8:, :], dim=0)
-
-        def sum_over_source_columns(x):
-            x_grouped = x.view(-1, 8)
-            return torch.sum(x_grouped, dim=1)
-
-        column_0 = sum_over_source_columns(column_0)
-        column_1 = sum_over_source_columns(column_1)
-
-        column_0_horizontal = column_0[::2].reshape((6, 6))
-        column_0_vertical = column_0[1::2].reshape((6, 6))
-
-        column_1_horizontal = column_1[::2].reshape((6, 6))
-        column_1_vertical = column_1[1::2].reshape((6, 6))
-
-        feature_maps = {
-            "col_0_horizontal": column_0_horizontal,
-            "col_0_vertical": column_0_vertical,
-            "col_1_horizontal": column_1_horizontal,
-            "col_1_vertical": column_1_vertical,
-        }
-
-        for name, fmap in feature_maps.items():
-            heatmap = plt.imshow(fmap.detach().numpy(), cmap="magma", interpolation="nearest", vmin=0.0, vmax=50.0)  # inferno, magma
-            plt.colorbar(heatmap)
-            plt.savefig('../results/png/epoch_{:02d}_label_{:1d}_{}_{:02d}'.format(epoch, labels[stim_idx], name, stim_idx))
-            plt.close()
-
-def prepare_ds(digits_to_include):
+def prepare_ds(digits_to_include, padding):
 
     # Load dataset
     digits = datasets.load_digits()
     X = digits.images  # shape: (n_samples, 8, 8)
     y = digits.target
+
+    # Pad the images
+    if padding > 0:
+        X = np.pad(X, ((0,0), (padding,padding), (padding,padding)))
 
     # Only data instances with a label in digits_to_include
     mask = np.isin(y, digits_to_include)
@@ -115,7 +120,7 @@ def init_network(nr_inputs, device):
 
     network_input = {'nr_areas': 2,
                      'areas': ['v1', 'v2'],
-                     'nr_columns_per_area': [72, 2],
+                     'nr_columns_per_area': [128, 2],
                      'nr_input_units': nr_inputs}
     network = ColumnNetwork(col_params, network_input, device)
     num_columns = sum(network_input['nr_columns_per_area'])
@@ -155,7 +160,15 @@ def run_batch(network, time_vec, initial_state, model_predictions, stims):
         #                      [0., 3., 11., 0., 1., 14., 0., 0.],
         #                      [0., 0., 12., 4., 6., 11., 0., 0.],
         #                      [0., 0., 5., 16., 14., 1., 0., 0.]]).reshape(64)
-        stim_as_image = stim.reshape((8, 8))
+        # stim = torch.tensor([[0., 10., 0., 0., 8., 16., 0., 0.],
+        #                      [16., 16., 16., 16., 16., 16., 0., 0.],
+        #                      [0., 10., 0., 15., 12., 16., 0., 0.],
+        #                      [0., 3., 8., 0., 8., 16., 0., 0.],
+        #                      [0., 0., 0., 0., 8., 16., 3., 0.],
+        #                      [0., 0., 0., 0., 8., 16., 4., 0.],
+        #                      [0., 0., 0., 0., 7., 16., 7., 0.],
+        #                      [0., 0., 0., 0., 10., 16., 8., 0.]]).reshape(64)
+        # stim_as_image = stim.reshape((10, 10))
 
         # Set image as stimulus
         network.stim = stim
@@ -165,18 +178,20 @@ def run_batch(network, time_vec, initial_state, model_predictions, stims):
         mem_adap_split = ode_output.shape[-1] // 2
         firing_rates = compute_firing_rate(ode_output[:, :, :mem_adap_split] - ode_output[:, :, mem_adap_split:])
         # # Plot firing rates
-        # firing_rates = firing_rates.squeeze(1).detach().numpy()
-        # col_idx = 576 # (288+128)*2
-        # for i in range(col_idx, firing_rates.shape[-1]):
+        # firing_rates_plot = firing_rates.squeeze(1).detach().numpy()
+        # col_idx = 1024 # 576
+        # for i in range(col_idx, firing_rates_plot.shape[-1] - 8):
         #     print(i - col_idx)
-        #     plt.plot(firing_rates[:, i])
+        #     plt.plot(firing_rates_plot[:, i])
+        #     plt.plot(firing_rates_plot[:, i+8])
         #     plt.show()
 
         # Get the firing rates from the final area columns
         size_last_area = network.nr_columns_per_area[-1]
         num_pops_last_area = size_last_area * 8  # 8 populations
 
-        firing_rates_last_area = firing_rates[-1, 0, -num_pops_last_area:]
+        firing_rates_last_area = firing_rates[-300:, 0, -num_pops_last_area:]
+        firing_rates_last_area = torch.mean(firing_rates_last_area, dim=0)
         firing_rates_last_area_L5 = firing_rates_last_area * network.output_weights
         separate_final_columns = torch.tensor_split(firing_rates_last_area_L5, size_last_area)
 
@@ -186,11 +201,16 @@ def run_batch(network, time_vec, initial_state, model_predictions, stims):
 
     return model_predictions, all_firing_rates
 
+def set_seed(seed):
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
 def train_digit_classification(device, batch_size=16, nr_epochs=50):
 
     # Get train and test set
     digits_to_include = [0, 1]
-    X_train, X_test, y_train, y_test = prepare_ds(digits_to_include)
+    X_train, X_test, y_train, y_test = prepare_ds(digits_to_include, padding=1)
     nr_inputs = X_train.shape[1]
 
     # DataLoader for train set
@@ -200,12 +220,16 @@ def train_digit_classification(device, batch_size=16, nr_epochs=50):
     # Initialize the network and associated variables
     network, time_vec, initial_state = init_network(nr_inputs, device)
 
+    # # Load in existing network
+    # with open('../results/seed_1/network_post_training_epoch_04.pkl', 'rb') as f:
+    #     network = pickle.load(f)
+
     # Training
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(network.parameters(), lr=1e-2)
 
     # Training loop
-    for epoch in range(nr_epochs):
+    for epoch in range(0, nr_epochs):
         print('Epoch {}'.format(epoch))
 
         for stims, labels in train_loader:
@@ -215,7 +239,11 @@ def train_digit_classification(device, batch_size=16, nr_epochs=50):
             model_predictions, _ = run_batch(network, time_vec, initial_state, model_predictions, stims)
 
             # Compute loss and backprop
-            loss = criterion(model_predictions, labels)
+            ce_loss = criterion(model_predictions, labels)
+            # one_hot_labels = nn.functional.one_hot(labels, num_classes=2)
+            # suppression = ((1 - one_hot_labels) * model_predictions).mean()
+            # gamma = 0.5
+            loss = ce_loss # + (gamma * suppression)
             print('Train loss {:.5f}'.format(loss.item()))
             optimizer.zero_grad()
             loss.backward()
@@ -224,10 +252,7 @@ def train_digit_classification(device, batch_size=16, nr_epochs=50):
 
             # Clamp the weights to ensure the weights are not below zero after updating (or are not higher than zero)
             for name, param in network.named_parameters():
-                if 'lateral' in name:
-                    param.data.clamp_(max=0.0)  # lateral inhibition weights can not be positive
-                if 'lateral' not in name:
-                    param.data.clamp_(min=0.0)  # other weights can not be negative
+                param.data.clamp_(min=0.0)  # weights can not be negative
 
         # Evaluate with test set, after every epoch
         with torch.no_grad():
@@ -254,5 +279,16 @@ def train_digit_classification(device, batch_size=16, nr_epochs=50):
 
 if __name__ == '__main__':
     device = 'cpu'
+    seed = 1
 
+    set_seed(seed)
     train_digit_classification(device)
+
+'''
+2 digits
+PCA filters
+padding=1
+trainable lateral weights
+
+cross-entropy loss
+'''

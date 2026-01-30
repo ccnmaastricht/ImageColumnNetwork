@@ -1,146 +1,103 @@
-import torch
-from torchdiffeq import odeint
-import matplotlib.pyplot as plt
-import pickle
-import os
 import numpy as np
-
-from src.utils import *
-from src.network import ColumnNetwork
-
-
-
-
-### SETTING UP ###
-
-nr_inputs = 1
-device = 'cpu'
-
-col_params = load_config('../config/model_params.toml')
-
-network_input = {'nr_areas': 4,
-                 'areas': ['v1', 'v2', 'v4', 'pitv'],
-                 'nr_columns_per_area': [1, 1, 1, 1],
-                 'nr_input_units': nr_inputs}
-network = ColumnNetwork(col_params, network_input, device)
-num_columns = sum(network_input['nr_columns_per_area'])
-
-stim_duration = 0.5
-dt = 1e-3
-time_steps = int(stim_duration * 2 / dt)
-time_vec = torch.linspace(0., time_steps * dt, time_steps)
-
-initial_state = torch.zeros(num_columns * 8 * 2)  # 2 state variables
-initial_state = initial_state.unsqueeze(0)
-
-network = network.to(device).to(torch.float32)
-initial_state = initial_state.to(device).to(torch.float32)
-time_vec = time_vec.to(device).to(torch.float32)
-
-network.time_vec = time_vec
+import matplotlib.pyplot as plt
+from pprint import pprint
+import torch
 
 
 
-# ### RUN THE NETWORK ###
-#
-# network.stim = torch.tensor([40.])
-#
-# ode_output = odeint(network, initial_state, time_vec)
-#
-# mem_adap_split = ode_output.shape[-1] // 2
-# firing_rates = compute_firing_rate(ode_output[:, :, :mem_adap_split] - ode_output[:, :, mem_adap_split:])
-# firing_rates = firing_rates.squeeze(1)
-#
-# firing_rates = firing_rates.detach().numpy()
-# for i in range(firing_rates.shape[-1]):
-#     print(i)
-#     plt.plot(firing_rates[:, i])
-#     plt.show()
+def plot_losses():
+    first_results = np.array([0.36819, 0.29233, 0.23789, 0.19832, 0.17293, 0.15922, 0.17718, 0.13544, 0.10962, 0.09414,
+                              0.08137, 0.07381, 0.06910, 0.07517, 0.07555, 0.07035, 0.07172, 0.04900, 0.05166, 0.10520, 0.06123])
+    lateral_inhibition = np.array([0.29813, 0.24475, 0.19827, 0.15619, 0.14935, 0.17384])
+    fixed_lat_in = np.array([0.61933, 0.59293, 0.56937, 0.54642, 0.52594, 0.50350, 0.48058, 0.45684])
+    standard_nn_filters = np.array([0.48396, 0.38025, 0.30133, 0.23103, 0.17630, 0.14610, 0.12705, 0.11318, 0.10259, 0.09445,
+                                    0.08690, 0.07900, 0.07248, 0.06585, 0.06182, 0.06448, 0.06534, 0.06472, 0.06421, 0.06350, 0.06279])
+
+    four_digits_loss = np.array([0.95601, 0.83898, 0.73341, 0.65373, 0.57863, 0.61715, 0.43527, 0.32707, 0.44571, 0.33031, 0.32502, 0.26905, 0.44826, 0.46390])
+    four_digits_acc = np.array([0.83, 0.90, 0.86, 0.86, 0.85, 0.85, 0.88, 0.92, 0.89, 0.90, 0.88, 0.90, 0.88, 0.88])
+    two_digits_loss = np.array([0.39998, 0.35447, 0.3240, 0.30238, 0.28452])
+    two_digits_acc = np.array([0.97, 0.94, 0.97, 1.00, 1.00])
+
+    pca_padding = np.array([0.55758, 0.43940, 0.32070, 0.22607, 0.16668, 0.12543, 0.09544, 0.07879, 0.07166, 0.06805,
+                            0.06698, 0.06840])
+    pca_padding_lat_in = np.array([0.55754, 0.43933, 0.32062, 0.22603, 0.16665, 0.12603, 0.09817, ])
+
+    plt.plot(first_results, label='baseline model (h/v)')
+    plt.plot(lateral_inhibition, label='learnable lateral inhibition')
+    plt.plot(fixed_lat_in, label='fixed lateral inhibition')
+    plt.plot(standard_nn_filters, label='using standard nn filters')
+    plt.legend()
+    plt.show()
+
+    plt.plot(two_digits_loss, label='two digits loss')
+    plt.plot(two_digits_acc, label='two digits accuracy', linestyle='--')
+    plt.plot(four_digits_loss, label='four digits loss')
+    plt.plot(four_digits_acc, label='four digits accuracy', linestyle='--')
+    plt.legend()
+    plt.show()
+
+    plt.plot(standard_nn_filters, label='standard nn filters')
+    plt.plot(pca_padding, label='+ padding')
+    plt.plot(pca_padding_lat_in, label='+ lateral inhibition')
+    plt.legend()
+    plt.show()
 
 
 
-### FUNCTIONS FOR TRAINING
+def experiment_with_loss_functions():
+    labels = torch.tensor([0, 1, 1, 0, 0, 1, 0, 1])
+    model_predictions_1 = torch.tensor([[1.9, 1.8],
+                                      [1.5, 18.5],
+                                      [1.4, 21.0],
+                                      [3.1, 2.9],
+                                      [18.0, 3.6],
+                                      [2.6, 24.0],
+                                      [23.5, 18.0],
+                                      [1.0, 21.5]])
+    model_predictions_2 = torch.tensor([[21.9, 1.8],
+                                      [1.5, 18.5],
+                                      [1.4, 21.0],
+                                      [23.1, 2.9],
+                                      [18.0, 3.6],
+                                      [2.6, 24.0],
+                                      [23.5, 1.0],
+                                      [1.0, 21.5]])
+    model_predictions_3 = torch.tensor([[1.9, 1.8],
+                                      [1.5, 1.9],
+                                      [1.4, 3.0],
+                                      [3.1, 2.9],
+                                      [2.0, 1.6],
+                                      [2.6, 2.8],
+                                      [2.5, 1.0],
+                                      [1.0, 1.5]])
+    targets =             torch.tensor([[20., 0.],
+                                       [0., 20.],
+                                       [0., 20.],
+                                       [20., 0.],
+                                       [20., 0.],
+                                       [0., 20.],
+                                       [20., 0.],
+                                       [0., 20.],
+                                       ])
 
-def mask_weights(network):
-    network.areas['0'].input_weights.grad *= network.areas['0'].input_mask  # input weights
+    # suppress non-target firing
+    mask = torch.nn.functional.one_hot(labels, num_classes=2)
+    bloop = (1 - mask)
+    bloopie = (1 - mask) * model_predictions_1
+    suppression = ((1 - mask) * model_predictions_1).mean()
 
-    for area_idx in range(1, network.nr_areas):  # feedforward weights, skip first area
-        network.areas[str(area_idx)].feedforward_weights.grad *= network.areas[str(area_idx)].feedforward_mask
+    bleppie = torch.nn.functional.one_hot(labels, num_classes=2) * 20.
+    print(bleppie)
 
-    # for area_idx in range(0, network.nr_areas - 1):  # feedback weights, skip last area
-    #     network.areas[str(area_idx)].feedback_weights.grad *= network.areas[str(area_idx)].feedback_mask
+    criterion = torch.nn.CrossEntropyLoss()
+    print(criterion(model_predictions_1, labels))
+    print(criterion(model_predictions_2, labels))
+    print(criterion(model_predictions_3, labels))
 
-def visualize_weights(network, train_iter):
-    if not os.path.exists('../results/png'):
-        os.makedirs('../results/png')
-
-    for name, param in network.named_parameters():
-        param_data = param.detach().cpu().numpy()
-
-        if np.sum(param_data) != 0:
-            fig, ax = plt.subplots(figsize=(13, 7))
-
-            if param_data.ndim == 2:  # 2D weight matrices: use heatmap
-                heatmap = ax.imshow(param_data, cmap="viridis", interpolation="nearest")
-                fig.colorbar(heatmap, ax=ax)
-                ax.set_title(f"Weight Matrix: {name}")
-
-            # Clean filename (remove problematic characters)
-            clean_name = name.replace('.', '_')
-            plt.savefig('../results/png/{}_{:02d}'.format(clean_name, train_iter + 1))
-            plt.close(fig)
+    print(torch.mean(abs(model_predictions_1 - targets)))
+    print(torch.mean(abs(model_predictions_2 - targets)))
+    print(torch.mean(abs(model_predictions_3 - targets)))
 
 
-
-### TRAIN THE NETWORK ###
-
-num_iterations = 1000
-optimizer = torch.optim.Adam(network.parameters(), lr=0.1, betas=(0.9, 0.999), eps=1e-08)
-
-for iter in range(num_iterations):
-    optimizer.zero_grad()
-
-    stims = torch.tensor([10., 12., 14., 16., 18.,
-                          20., 22., 24., 26., 28.,
-                          30., 32., 34., 36., 38.,
-                          40.])
-    batch_output = torch.zeros_like(stims)
-
-    for i, stim in enumerate(stims):
-
-        network.stim = stim.unsqueeze(0)
-
-        ode_output = odeint(network, initial_state, time_vec)
-
-        mem_adap_split = ode_output.shape[-1] // 2
-        firing_rates = compute_firing_rate(ode_output[:, :, :mem_adap_split] - ode_output[:, :, mem_adap_split:])
-        firing_rates = firing_rates.squeeze(1)
-
-        output_layer_fr = firing_rates[:, -4]  # layer 5 of last column
-        batch_output[i] = torch.mean(output_layer_fr[-300:], dim=0)  # average over last 300 time steps
-
-        # print(torch.mean(output_layer_fr[-300:], dim=0))
-        # plt.plot(output_layer_fr.detach().numpy())
-        # plt.show()
-
-    # Calculate loss and backprop
-    loss = torch.mean(abs(stims - batch_output))
-    loss.backward()
-
-    print('Iter {:02d} | Total Loss {:.5f}'.format(iter + 1, loss.item()))
-
-    mask_weights(network)
-    optimizer.step()
-
-    for name, param in network.named_parameters():
-        param.data.clamp_(min=0.0)  # synapse weights can not be negative
-
-    # Every n batches, print results, visualize weights and save the current network
-    with torch.no_grad():
-        if iter % 5 == 0:
-            print('L5e firing rates {}'.format(batch_output))
-            visualize_weights(network, iter)
-            with open('../models/network_trained_synapses.pkl', 'wb') as f:
-                pickle.dump(network, f)
-
+plot_losses()
 

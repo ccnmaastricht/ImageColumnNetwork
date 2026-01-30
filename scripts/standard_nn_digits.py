@@ -8,6 +8,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 
 
@@ -67,25 +68,14 @@ class DigitCNN(nn.Module):
     def __init__(self, num_classes=10):
         super().__init__()
         self.layer1 = nn.Sequential(
-            nn.Conv2d(1, 16, kernel_size=3, padding=1),  # local receptive fields
+            nn.Conv2d(1, 1, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(2)  # reduces 8×8 → 4×4
-        )
-        self.layer2 = nn.Sequential(
-            nn.Conv2d(16, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(2)  # reduces 4×4 → 2×2
-        )
-        self.layer3 = nn.Sequential(
-            nn.Conv2d(32, 64, kernel_size=2),  # reduces 2×2 → 1×1
-            nn.ReLU()
+            # reduces 8×8 → 6×6
         )
         self.output = nn.Linear(64, num_classes)
 
     def forward(self, x):
         x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)  # now shape (batch, 64, 1, 1)
         x = x.view(x.size(0), -1)  # flatten
         x = self.output(x)
         return x
@@ -96,6 +86,12 @@ def nn_classification():
     digits = datasets.load_digits()
     X = digits.images  # shape: (n_samples, 8, 8)
     y = digits.target
+
+    # Only data instances with a label in digits_to_include
+    digits_to_include = [0, 1]
+    mask = np.isin(y, digits_to_include)
+    X = X[mask]
+    y = y[mask]
 
     # Normalize pixel values (0–16 → 0–1)
     X = X / 16.0
@@ -112,13 +108,13 @@ def nn_classification():
     y_test = torch.tensor(y_test, dtype=torch.long)
 
     # Initialize nn
-    model = DigitCNN()
+    model = DigitCNN(num_classes=len(digits_to_include))
 
     # Training
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
-    epochs = 50
+    epochs = 200
     for epoch in range(epochs):
         outputs = model(X_train)
         loss = criterion(outputs, y_train)
@@ -130,6 +126,7 @@ def nn_classification():
         _, predicted = torch.max(outputs, 1)
         acc = (predicted == y_train).float().mean()
         print(f"Epoch {epoch + 1}/{epochs}, Loss: {loss.item():.4f}, Train Acc: {acc:.4f}")
+        print(f"Learned weights: {list(model.parameters())[0]}")
 
     # Evaluation
     model.eval()
@@ -139,6 +136,13 @@ def nn_classification():
 
     print("Classification report:")
     print(classification_report(y_test, predicted.numpy()))
+
+    heatmap = plt.imshow(list(model.parameters())[0][0][0].detach().numpy(), cmap="magma", interpolation="nearest", vmin=-0.5, vmax=0.5)
+    plt.colorbar(heatmap)
+    plt.show()
+    heatmap = plt.imshow(list(model.parameters())[0][1][0].detach().numpy(), cmap="magma", interpolation="nearest", vmin=-0.5, vmax=0.5)
+    plt.colorbar(heatmap)
+    plt.show()
 
 
 if __name__ == '__main__':
