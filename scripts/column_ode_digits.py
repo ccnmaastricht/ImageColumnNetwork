@@ -112,8 +112,8 @@ def mask_weights(network):
     for area_idx in range(1, network.nr_areas):  # feedforward weights, skip first area
         network.areas[str(area_idx)].feedforward_weights.grad *= network.areas[str(area_idx)].feedforward_mask
 
-    for area_idx in range(network.nr_areas):  # lateral weights
-        network.areas[str(area_idx)].lateral_weights.grad *= network.areas[str(area_idx)].lateral_mask
+    # for area_idx in range(network.nr_areas):  # lateral weights
+    #     network.areas[str(area_idx)].lateral_weights.grad *= network.areas[str(area_idx)].lateral_mask
 
 def init_network(nr_inputs, device):
     col_params = load_config('../config/model_params.toml')
@@ -221,7 +221,7 @@ def train_digit_classification(device, batch_size=16, nr_epochs=50):
     network, time_vec, initial_state = init_network(nr_inputs, device)
 
     # # Load in existing network
-    # with open('../results/seed_1/network_post_training_epoch_04.pkl', 'rb') as f:
+    # with open('../results/seed_1_padding_suppression/network_post_training_epoch_11.pkl', 'rb') as f:
     #     network = pickle.load(f)
 
     # Training
@@ -240,10 +240,10 @@ def train_digit_classification(device, batch_size=16, nr_epochs=50):
 
             # Compute loss and backprop
             ce_loss = criterion(model_predictions, labels)
-            # one_hot_labels = nn.functional.one_hot(labels, num_classes=2)
-            # suppression = ((1 - one_hot_labels) * model_predictions).mean()
-            # gamma = 0.5
-            loss = ce_loss # + (gamma * suppression)
+            one_hot_labels = nn.functional.one_hot(labels, num_classes=2)
+            mae = torch.mean(abs(model_predictions - (one_hot_labels * 20.0)))
+            suppression = ((1 - one_hot_labels) * model_predictions).mean()
+            loss = ce_loss + (0.1 * suppression)
             print('Train loss {:.5f}'.format(loss.item()))
             optimizer.zero_grad()
             loss.backward()
@@ -261,7 +261,16 @@ def train_digit_classification(device, batch_size=16, nr_epochs=50):
             model_predictions, firing_rates = run_batch(network, time_vec, initial_state, model_predictions, X_test)
 
             test_loss = criterion(model_predictions, y_test)
-            print('Test loss {:.5f}'.format(test_loss.item()))
+            print('Test loss CE {:.5f}'.format(test_loss.item()))
+
+            one_hot_labels = nn.functional.one_hot(y_test, num_classes=2)
+            suppression = ((1 - one_hot_labels) * model_predictions).mean()
+            loss_supp = test_loss + (0.5 * suppression)
+            print('Test loss CE with suppression {:.5f}'.format(loss_supp.item()))
+
+            test_mae = torch.mean(abs(model_predictions - (one_hot_labels * 20.0)))
+            print('Test loss MAE {:.5f}'.format(test_mae.item()))
+
             test_acc = (y_test == torch.argmax(model_predictions, dim=1)).float().mean()
             print('Test accuracy {:.2f}'.format(test_acc))
 
@@ -288,7 +297,8 @@ if __name__ == '__main__':
 2 digits
 PCA filters
 padding=1
-trainable lateral weights
+no lateral weights
 
-cross-entropy loss
+cross-entropy loss with suppression=0.1
 '''
+

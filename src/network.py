@@ -563,7 +563,7 @@ class ColumnNetwork(torch.nn.Module):
             area.lateral_mask = lateral_mask
             lateral_weights = lateral_init * lateral_mask
 
-            area.lateral_weights = nn.Parameter(lateral_weights, requires_grad=True)
+            area.lateral_weights = nn.Parameter(lateral_weights, requires_grad=False)  # NO!
 
     def set_time_vec(self, time_vec):
         '''
