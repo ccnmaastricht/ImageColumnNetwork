@@ -1,5 +1,6 @@
 import tomllib
 import torch
+import pickle
 
 
 def load_config(filepath: str) -> dict:
@@ -8,6 +9,23 @@ def load_config(filepath: str) -> dict:
     '''
     with open(filepath, 'rb') as f:
         return tomllib.load(f)
+
+
+def load_pkl_file(fn):
+    '''
+    Load the data from a pickle file
+    '''
+    with open(fn, 'rb') as f:
+        data = pickle.load(f)
+    return data
+
+
+def save_pkl_file(fn, data):
+    '''
+    Save the data to a pickle file
+    '''
+    with open(fn, 'wb') as f:
+        pickle.dump(data, f)
 
 
 def compute_firing_rate(x):

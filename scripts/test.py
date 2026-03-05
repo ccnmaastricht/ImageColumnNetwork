@@ -152,20 +152,57 @@ def heatmap_model_output():
         [ 1.1188, 19.8795,  1.0000],
         [ 3.7652,  1.0458,  0.0000]])
 
+    filters_from_scratch = np.array([[2.2995e+00, 1.0191e+00, 1.0000e+00],
+        [8.0233e-01, 1.6248e+01, 1.0000e+00],
+        [2.1794e+01, 7.7807e-01, 0.0000e+00],
+        [1.8917e+01, 6.5584e-01, 0.0000e+00],
+        [7.5607e-02, 3.9207e+01, 1.0000e+00],
+        [3.8228e-02, 3.9080e+01, 1.0000e+00],
+        [2.4753e-02, 4.9050e+01, 1.0000e+00],
+        [1.1944e-01, 2.5414e+01, 1.0000e+00],
+        [2.0921e+01, 5.9870e-01, 0.0000e+00],
+        [2.1402e+01, 6.7524e-01, 0.0000e+00],
+        [1.8798e+01, 7.3693e-01, 0.0000e+00],
+        [2.0128e+01, 1.1834e+00, 0.0000e+00],
+        [5.2994e-02, 4.6897e+01, 1.0000e+00],
+        [1.1113e+01, 5.6796e-01, 0.0000e+00],
+        [1.7092e+01, 6.2067e-01, 0.0000e+00],
+        [3.6517e-01, 2.5588e+01, 1.0000e+00],
+        [2.5852e+01, 8.4788e-01, 0.0000e+00],
+        [8.5801e-02, 2.8153e+01, 1.0000e+00],
+        [5.5205e-01, 1.3438e+01, 1.0000e+00],
+        [2.2510e+01, 9.0656e-01, 0.0000e+00],
+        [1.9293e+01, 6.1023e-01, 0.0000e+00],
+        [2.2212e-01, 2.1364e+01, 1.0000e+00],
+        [1.9241e+01, 7.1310e-01, 0.0000e+00],
+        [2.5079e+01, 9.5718e-01, 0.0000e+00],
+        [6.7484e-02, 4.1162e+01, 1.0000e+00],
+        [2.3036e+01, 8.1251e-01, 0.0000e+00],
+        [3.2742e+00, 5.9187e-01, 0.0000e+00],
+        [6.0096e-02, 3.3090e+01, 1.0000e+00],
+        [2.4637e+01, 7.2472e-01, 0.0000e+00],
+        [2.5259e-02, 5.5742e+01, 1.0000e+00],
+        [4.4965e-02, 3.4853e+01, 1.0000e+00],
+        [1.3330e+01, 6.2596e-01, 0.0000e+00],
+        [3.4885e+00, 6.1096e-01, 0.0000e+00],
+        [2.8557e-01, 2.5285e+01, 1.0000e+00],
+        [1.0098e-01, 3.2879e+01, 1.0000e+00],
+        [1.9964e+01, 6.5263e-01, 0.0000e+00]])
 
-    fig, axes = plt.subplots(1, 3, figsize=(10, 10))
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 10))
 
     heatmap1 = axes[0].imshow(suppression_epoch_11[:, 2:], cmap="magma", interpolation="nearest")
     fig.colorbar(heatmap1, ax=axes[0])
     axes[0].set_title('Labels')
 
-    heatmap2 = axes[1].imshow(padding_epoch_11[:, :2], cmap="magma", interpolation="nearest")
+    heatmap2 = axes[1].imshow(filters_from_scratch[:, :2], cmap="magma", interpolation="nearest", vmax=30.0)
     fig.colorbar(heatmap2, ax=axes[1])
-    axes[1].set_title('FR after training with CE only')
+    axes[1].set_title('FR of learning filters from scratch (epoch 14)')
 
-    heatmap3 = axes[2].imshow(suppression_epoch_11[:, :2], cmap="magma", interpolation="nearest")
-    fig.colorbar(heatmap3, ax=axes[2])
-    axes[2].set_title('FR after training with suppression')
+    # heatmap3 = axes[2].imshow(suppression_epoch_11[:, :2], cmap="magma", interpolation="nearest")
+    # fig.colorbar(heatmap3, ax=axes[2])
+    # axes[2].set_title('FR after training with suppression')
 
     plt.show()
 

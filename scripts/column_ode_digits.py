@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from pprint import pprint
 import pickle
 import random
+import time
 
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
@@ -109,20 +110,22 @@ def prepare_ds(digits_to_include, padding):
 
 def mask_weights(network):
 
+    network.areas['0'].input_weights.grad *= network.areas['0'].input_mask
+
     for area_idx in range(1, network.nr_areas):  # feedforward weights, skip first area
         network.areas[str(area_idx)].feedforward_weights.grad *= network.areas[str(area_idx)].feedforward_mask
 
     # for area_idx in range(network.nr_areas):  # lateral weights
     #     network.areas[str(area_idx)].lateral_weights.grad *= network.areas[str(area_idx)].lateral_mask
 
-def init_network(nr_inputs, device):
+def init_network(nr_inputs, nr_outputs, batch_size, device):
     col_params = load_config('../config/model_params.toml')
 
     network_input = {'nr_areas': 2,
                      'areas': ['v1', 'v2'],
-                     'nr_columns_per_area': [128, 2],
+                     'nr_columns_per_area': [128, nr_outputs],
                      'nr_input_units': nr_inputs}
-    network = ColumnNetwork(col_params, network_input, device)
+    network = ColumnNetwork(col_params, network_input)
     num_columns = sum(network_input['nr_columns_per_area'])
 
     stim_duration = 0.5
@@ -130,83 +133,79 @@ def init_network(nr_inputs, device):
     time_steps = int(stim_duration * 2 / dt)
     time_vec = torch.linspace(0., time_steps * dt, time_steps)
 
-    initial_state = torch.zeros(num_columns * 8 * 2)  # 2 state variables
-    initial_state = initial_state.unsqueeze(0)
-
-    network = network.to(device).to(torch.float32)
-    initial_state = initial_state.to(device).to(torch.float32)
-    time_vec = time_vec.to(device).to(torch.float32)
+    initial_state = torch.zeros(1, num_columns * 8 * 2)  # 2 state variables
 
     network.time_vec = time_vec
-    return network, time_vec, initial_state
+    return network.to(device), time_vec.to(device), initial_state.to(device)
 
-def run_batch(network, time_vec, initial_state, model_predictions, stims):
-    all_firing_rates = torch.Tensor(stims.shape[0], time_vec.shape[0], network.network_as_area.num_populations)
+def run_batch(network, time_vec, initial_state, model_predictions, stims, device):
 
-    for stim_idx, stim in enumerate(stims):
-        # stim = torch.tensor([[0., 0., 0., 0., 8., 16., 0., 0.],
-        #                      [0., 5., 13., 16., 16., 16., 0., 0.],
-        #                      [0., 11., 16., 15., 12., 16., 0., 0.],
-        #                      [0., 3., 8., 0., 8., 16., 0., 0.],
-        #                      [0., 0., 0., 0., 8., 16., 3., 0.],
-        #                      [0., 0., 0., 0., 8., 16., 4., 0.],
-        #                      [0., 0., 0., 0., 7., 16., 7., 0.],
-        #                      [0., 0., 0., 0., 10., 16., 8., 0.]]).reshape(64)
-        # stim = torch.tensor([[0., 0., 4., 13., 14., 8., 0., 0.],
-        #                      [0., 3., 14., 3., 1., 16., 3., 0.],
-        #                      [0., 7., 9., 0., 0., 14., 6., 0.],
-        #                      [0., 8., 4., 0., 0., 16., 4., 0.],
-        #                      [0., 8., 6., 0., 0., 16., 0., 0.],
-        #                      [0., 3., 11., 0., 1., 14., 0., 0.],
-        #                      [0., 0., 12., 4., 6., 11., 0., 0.],
-        #                      [0., 0., 5., 16., 14., 1., 0., 0.]]).reshape(64)
-        # stim = torch.tensor([[0., 10., 0., 0., 8., 16., 0., 0.],
-        #                      [16., 16., 16., 16., 16., 16., 0., 0.],
-        #                      [0., 10., 0., 15., 12., 16., 0., 0.],
-        #                      [0., 3., 8., 0., 8., 16., 0., 0.],
-        #                      [0., 0., 0., 0., 8., 16., 3., 0.],
-        #                      [0., 0., 0., 0., 8., 16., 4., 0.],
-        #                      [0., 0., 0., 0., 7., 16., 7., 0.],
-        #                      [0., 0., 0., 0., 10., 16., 8., 0.]]).reshape(64)
-        # stim_as_image = stim.reshape((10, 10))
+    # stim = torch.tensor([[0., 0., 0., 0., 8., 16., 0., 0.],
+    #                      [0., 5., 13., 16., 16., 16., 0., 0.],
+    #                      [0., 11., 16., 15., 12., 16., 0., 0.],
+    #                      [0., 3., 8., 0., 8., 16., 0., 0.],
+    #                      [0., 0., 0., 0., 8., 16., 3., 0.],
+    #                      [0., 0., 0., 0., 8., 16., 4., 0.],
+    #                      [0., 0., 0., 0., 7., 16., 7., 0.],
+    #                      [0., 0., 0., 0., 10., 16., 8., 0.]]).reshape(64)
+    # stim = torch.tensor([[0., 0., 4., 13., 14., 8., 0., 0.],
+    #                      [0., 3., 14., 3., 1., 16., 3., 0.],
+    #                      [0., 7., 9., 0., 0., 14., 6., 0.],
+    #                      [0., 8., 4., 0., 0., 16., 4., 0.],
+    #                      [0., 8., 6., 0., 0., 16., 0., 0.],
+    #                      [0., 3., 11., 0., 1., 14., 0., 0.],
+    #                      [0., 0., 12., 4., 6., 11., 0., 0.],
+    #                      [0., 0., 5., 16., 14., 1., 0., 0.]]).reshape(64)
+    # stim = torch.tensor([[0., 10., 0., 0., 8., 16., 0., 0.],
+    #                      [16., 16., 16., 16., 16., 16., 0., 0.],
+    #                      [0., 10., 0., 15., 12., 16., 0., 0.],
+    #                      [0., 3., 8., 0., 8., 16., 0., 0.],
+    #                      [0., 0., 0., 0., 8., 16., 3., 0.],
+    #                      [0., 0., 0., 0., 8., 16., 4., 0.],
+    #                      [0., 0., 0., 0., 7., 16., 7., 0.],
+    #                      [0., 0., 0., 0., 10., 16., 8., 0.]]).reshape(64)
+    # stim_as_image = stim.reshape((10, 10))
 
-        # Set image as stimulus
-        network.stim = stim
+    # Set image as stimulus
+    stims = stims.to(device)
+    network.set_stim(stims)
 
-        # Run the network and compute the firing rates
-        ode_output = odeint(network, initial_state, time_vec)
-        mem_adap_split = ode_output.shape[-1] // 2
-        firing_rates = compute_firing_rate(ode_output[:, :, :mem_adap_split] - ode_output[:, :, mem_adap_split:])
-        # # Plot firing rates
-        # firing_rates_plot = firing_rates.squeeze(1).detach().numpy()
-        # col_idx = 1024 # 576
-        # for i in range(col_idx, firing_rates_plot.shape[-1] - 8):
-        #     print(i - col_idx)
-        #     plt.plot(firing_rates_plot[:, i])
-        #     plt.plot(firing_rates_plot[:, i+8])
-        #     plt.show()
+    # Run the network and compute the firing rates
+    ode_output = odeint(network, initial_state, time_vec).to(device)
+    mem_adap_split = ode_output.shape[-1] // 2
+    firing_rates = compute_firing_rate(ode_output[:, :, :mem_adap_split] - ode_output[:, :, mem_adap_split:])
+    # # Plot firing rates
+    # firing_rates_plot = firing_rates.squeeze(1).detach().numpy()
+    # col_idx = 1024 # 576
+    # for i in range(col_idx, firing_rates_plot.shape[-1] - 8):
+    #     print(i - col_idx)
+    #     plt.plot(firing_rates_plot[:, i])
+    #     plt.plot(firing_rates_plot[:, i+8])
+    #     plt.show()
 
-        # Get the firing rates from the final area columns
-        size_last_area = network.nr_columns_per_area[-1]
-        num_pops_last_area = size_last_area * 8  # 8 populations
+    # Get the firing rates from the final area columns
+    size_last_area = network.nr_columns_per_area[-1]
+    num_pops_last_area = size_last_area * 8  # 8 populations
 
-        firing_rates_last_area = firing_rates[-300:, 0, -num_pops_last_area:]
-        firing_rates_last_area = torch.mean(firing_rates_last_area, dim=0)
-        firing_rates_last_area_L5 = firing_rates_last_area * network.output_weights
-        separate_final_columns = torch.tensor_split(firing_rates_last_area_L5, size_last_area)
+    fr_last_area = firing_rates[-300:, :, -num_pops_last_area:]
+    fr_last_area = torch.mean(fr_last_area, dim=0)
+    fr_output = fr_last_area * network.output_weights
 
-        for column_idx, column in enumerate(separate_final_columns):
-            model_predictions[stim_idx, column_idx] = torch.sum(column)
-        all_firing_rates[stim_idx] = firing_rates.squeeze(1)
+    for col_idx in range(size_last_area):
+        col = fr_output[:, col_idx * 8 : (col_idx+1) * 8]
+        col_summed = torch.sum(col, dim=1)
+        model_predictions[:, col_idx] = col_summed
 
-    return model_predictions, all_firing_rates
+    return model_predictions, firing_rates
 
 def set_seed(seed):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
 
-def train_digit_classification(device, batch_size=16, nr_epochs=50):
+def train_digit_classification(device,
+                               batch_size=16,
+                               nr_epochs=50):
 
     # Get train and test set
     digits_to_include = [0, 1]
@@ -215,14 +214,13 @@ def train_digit_classification(device, batch_size=16, nr_epochs=50):
 
     # DataLoader for train set
     train_ds = TensorDataset(X_train, y_train)
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True)
 
     # Initialize the network and associated variables
-    network, time_vec, initial_state = init_network(nr_inputs, device)
+    network, time_vec, initial_state = init_network(nr_inputs, len(digits_to_include), batch_size, device)
 
     # # Load in existing network
-    # with open('../results/seed_1_padding_suppression/network_post_training_epoch_11.pkl', 'rb') as f:
-    #     network = pickle.load(f)
+    # network = load_pkl_file('../results/__.pkl')
 
     # Training
     criterion = nn.CrossEntropyLoss()
@@ -233,18 +231,19 @@ def train_digit_classification(device, batch_size=16, nr_epochs=50):
         print('Epoch {}'.format(epoch))
 
         for stims, labels in train_loader:
+            start = time.time()
 
             # Run the network with the training batch as input
-            model_predictions = torch.zeros(stims.shape[0], len(digits_to_include))
-            model_predictions, _ = run_batch(network, time_vec, initial_state, model_predictions, stims)
+            initial_train = torch.tile(initial_state, (batch_size, 1))
+            model_predictions = torch.zeros(batch_size, len(digits_to_include))
+            model_predictions, _ = run_batch(network, time_vec, initial_train, model_predictions, stims, device)
 
             # Compute loss and backprop
             ce_loss = criterion(model_predictions, labels)
-            one_hot_labels = nn.functional.one_hot(labels, num_classes=2)
+            one_hot_labels = nn.functional.one_hot(labels, num_classes=len(digits_to_include))
             mae = torch.mean(abs(model_predictions - (one_hot_labels * 20.0)))
             suppression = ((1 - one_hot_labels) * model_predictions).mean()
             loss = ce_loss + (0.1 * suppression)
-            print('Train loss {:.5f}'.format(loss.item()))
             optimizer.zero_grad()
             loss.backward()
             mask_weights(network)  # no illegal updates
@@ -254,18 +253,21 @@ def train_digit_classification(device, batch_size=16, nr_epochs=50):
             for name, param in network.named_parameters():
                 param.data.clamp_(min=0.0)  # weights can not be negative
 
+            print('Train loss | {:.5f} | {:.1f}s'.format(loss.item(), time.time() - start))
+
         # Evaluate with test set, after every epoch
         with torch.no_grad():
             print('==================== TESTING ====================')
+            initial_test = torch.tile(initial_state, (X_test.shape[0], 1))
             model_predictions = torch.zeros(X_test.shape[0], len(digits_to_include))
-            model_predictions, firing_rates = run_batch(network, time_vec, initial_state, model_predictions, X_test)
+            model_predictions, firing_rates = run_batch(network, time_vec, initial_test, model_predictions, X_test, device)
 
             test_loss = criterion(model_predictions, y_test)
             print('Test loss CE {:.5f}'.format(test_loss.item()))
 
-            one_hot_labels = nn.functional.one_hot(y_test, num_classes=2)
+            one_hot_labels = nn.functional.one_hot(y_test, num_classes=len(digits_to_include))
             suppression = ((1 - one_hot_labels) * model_predictions).mean()
-            loss_supp = test_loss + (0.5 * suppression)
+            loss_supp = test_loss + (0.1 * suppression)
             print('Test loss CE with suppression {:.5f}'.format(loss_supp.item()))
 
             test_mae = torch.mean(abs(model_predictions - (one_hot_labels * 20.0)))
@@ -279,15 +281,14 @@ def train_digit_classification(device, batch_size=16, nr_epochs=50):
 
             # Visualize results and save current network
             visualize_feature_maps_and_weights(network, firing_rates, y_test, epoch)
-            with open('../results/png/network_post_training_epoch_{:02d}.pkl'.format(epoch), 'wb') as f:
-                pickle.dump(network, f)
+            save_pkl_file('../results/png/network_post_training_epoch_{:02d}.pkl', network)
 
 
 
 
 
 if __name__ == '__main__':
-    device = 'cpu'
+    device = torch.device('mps')
     seed = 1
 
     set_seed(seed)

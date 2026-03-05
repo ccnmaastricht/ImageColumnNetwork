@@ -144,13 +144,12 @@ class ColumnNetwork(torch.nn.Module):
     only feedforward connections are allowed.
     '''
 
-    def __init__(self, model_parameters, network_dict, device):
+    def __init__(self, model_parameters, network_dict):
         super().__init__()
 
         self.noise_type = "diagonal"  # sde params
         self.sde_type = "ito"
 
-        self.device = device
         self._initialize_areas(model_parameters, network_dict)
 
         self.network_as_area = ColumnArea(model_parameters, 'v1', sum(network_dict['nr_columns_per_area']))
@@ -176,7 +175,6 @@ class ColumnNetwork(torch.nn.Module):
             num_columns = network_dict['nr_columns_per_area'][area_idx]
 
             area = ColumnArea(model_parameters, area_name, num_columns)
-            area = area.to(self.device)
             self.areas[str(area_idx)] = area
 
     def _initialize_masks(self, model_parameters):
@@ -192,7 +190,6 @@ class ColumnNetwork(torch.nn.Module):
         self.feedback_mask = torch.tensor(masks['feedback'])
         self.lateral_mask = torch.tensor(masks['lateral'])
 
-    # Not in use right now
     def make_receptive_fields_v1_vanilla(self, fully_connected_input_mask, receptive_field_size=3, stride=1):
 
         num_input_pops, len_input_image = fully_connected_input_mask.shape
@@ -421,7 +418,7 @@ class ColumnNetwork(torch.nn.Module):
     #     # Make 3x3 receptive fields
     #     input_mask = torch.tile(self.input_mask, (size_target, size_source))
     #     input_mask = self.make_receptive_fields_v1_hori_verti(input_mask)
-    #     first_area.input_mask = abs(input_mask).to(self.device)
+    #     first_area.input_mask = abs(input_mask)
     #
     #     # Apply receptive field input mask to weights
     #     input_init_excitatory = input_init_excitatory * input_mask
@@ -453,16 +450,18 @@ class ColumnNetwork(torch.nn.Module):
 
         std_W = 1.0
         rand_input_weights = abs(torch.normal(mean=input_init, std=std_W))
-        rand_input_weights = input_init * first_area.baseline_synaptic_strength * 0.7
+        # rand_input_weights = input_init * first_area.baseline_synaptic_strength * 0.7  # for pca filters
+        rand_input_weights = rand_input_weights * first_area.baseline_synaptic_strength * 0.2  # for learning from scratch
 
         input_mask = torch.tile(self.input_mask, (size_target, size_source))
         # Make 3x3 receptive fields
         # input_mask = self.make_receptive_fields_v1_hori_verti(input_mask)
-        input_mask = self.make_receptive_fields_v1_pca(input_mask)
-        first_area.input_mask = input_mask
+        # input_mask = self.make_receptive_fields_v1_pca(input_mask)
+        input_mask = self.make_receptive_fields_v1_vanilla(input_mask)
+        first_area.register_buffer('input_mask', input_mask)
 
         rand_input_weights = rand_input_weights * input_mask
-        first_area.input_weights = nn.Parameter(rand_input_weights, requires_grad=False) # NOT TRAINING NOW
+        first_area.input_weights = nn.Parameter(rand_input_weights, requires_grad=True)
 
     def _initialize_feedforward_weights(self, model_parameters):
         '''
@@ -491,7 +490,7 @@ class ColumnNetwork(torch.nn.Module):
                 # elif area_idx == '4':
                 #     # Make 2x2 receptive fields
                 #     ff_mask = self.make_receptive_fields_v2(ff_mask, receptive_field_size=2, nr_source_cols_same_rf=1)
-                area.feedforward_mask = ff_mask
+                area.register_buffer('feedforward_mask', ff_mask)
 
                 rand_ff_weights = rand_ff_weights * ff_mask
                 area.feedforward_weights = nn.Parameter(rand_ff_weights, requires_grad=True)
@@ -541,12 +540,12 @@ class ColumnNetwork(torch.nn.Module):
     def _initialize_lateral_weights(self, model_parameters):
 
         for area_idx, area in self.areas.items():
-            area.inner_weights = area.recurrent_weights * area.internal_mask  # set any existing external connectivity to zero
-            area.inner_weights = area.inner_weights.to(self.device)
+            inner_weights = area.recurrent_weights * area.internal_mask  # set any existing external connectivity to zero
+            area.register_buffer('inner_weights', inner_weights)
 
             # Initialize lateral weights; all the same (860 for V1; 915 for V2)
             lateral_init = torch.ones((area.num_populations, area.num_populations)) * 0.1 # * 860
-            lateral_init = lateral_init.to(self.device)
+            lateral_init = lateral_init
 
             # Reshape lateral mask
             lateral_mask = torch.tile(self.lateral_mask, (area.num_columns, area.num_columns)) * area.external_mask
@@ -579,6 +578,13 @@ class ColumnNetwork(torch.nn.Module):
         '''
         self.stim = stim
 
+    def get_device(self):
+        '''
+        Gets the network's current device, based on the first area's
+        feedforward weights.
+        '''
+        return self.areas['0'].input_weights.device
+
     def partition_firing_rates(self, firing_rate):
         '''
         Organizes the firing rates into a dict of separate areas.
@@ -587,7 +593,7 @@ class ColumnNetwork(torch.nn.Module):
         fr_per_area = {}
         idx = 0
         for area_idx, area in self.areas.items():
-            fr_area = firing_rate[idx : idx + area.num_populations]
+            fr_area = firing_rate[:, idx : idx + area.num_populations]
             fr_per_area[area_idx] = fr_area
             idx = idx + area.num_populations
         return fr_per_area
@@ -598,41 +604,41 @@ class ColumnNetwork(torch.nn.Module):
         consists of feedforward current (stimulus-driven and/or from other
         brain areas), background current and recurrent current.
         '''
-        total_current = torch.Tensor().to(self.device)
+        total_current = torch.Tensor().to(self.get_device())
 
         for area_idx, area in self.areas.items():
 
             # Compute feedforward current of each area, based on
             # area=0: external input or area>0: the previous area's firing rate
-            feedforward_current = torch.zeros(area.num_populations).to(self.device)
+            feedforward_current = torch.zeros(area.num_populations)
             if area_idx == '0':
-                weights = area.input_weights
-                feedforward_current = torch.matmul(area.input_weights, ext_ff_rate)
+                feedforward_current = torch.matmul(ext_ff_rate, area.input_weights.T)
             elif area_idx > '0':  # subsequent areas receive previous area's firing rate
                 idx_prev_area = str(int(area_idx) - 1)
                 prev_area_fr = fr_per_area[idx_prev_area]
-                feedforward_current = torch.matmul(area.feedforward_weights, prev_area_fr)
+                feedforward_current = torch.matmul(prev_area_fr, area.feedforward_weights.T)
 
             # # Compute feedback current
-            # feedback_current = torch.zeros(area.num_populations).to(self.device)
+            # feedback_current = torch.zeros(area.num_populations)
             # if int(area_idx) < (len(self.areas) - 1):  # only last area has no fb weights, so skip that one
             #     key_next_area = str(int(area_idx) + 1)
             #     next_area_fr = fr_per_area[key_next_area]
             #     feedback_current = torch.matmul(area.feedback_weights, next_area_fr)
 
             # Compute recurrent current
-            recurrent_current = torch.matmul(area.inner_weights, fr_per_area[area_idx])
-            lateral_current = torch.matmul(area.lateral_weights, fr_per_area[area_idx])
+
+            recurrent_current = torch.matmul(fr_per_area[area_idx], area.inner_weights.T)
+            lateral_current = torch.matmul(fr_per_area[area_idx], area.lateral_weights.T)
 
             # Background current
-            background_current = area.background_weights * area.background_drive
+            background_current = torch.tile(area.background_drive, (ext_ff_rate.shape[0], 1)) * area.background_weights
 
             # Total current of this area
             total_current_area = (feedforward_current +
                                   lateral_current +
                                   recurrent_current +
                                   background_current) * area.synapse_time_constant
-            total_current = torch.cat((total_current, total_current_area), dim=0)
+            total_current = torch.cat((total_current, total_current_area), dim=1)
 
         return total_current
 
@@ -643,18 +649,17 @@ class ColumnNetwork(torch.nn.Module):
         '''
 
         # Prepare the state (membrane, adaptation)
-        state = state.squeeze(0)  # lose extra dim
-        mem_adap_split = len(state) // 2
-        membrane_potential, adaptation = state[:mem_adap_split], state[mem_adap_split:]
+        mem_adap_split = state.shape[1] // 2
+        membrane_potential, adaptation = state[:, :mem_adap_split], state[:, mem_adap_split:]
 
         firing_rate = compute_firing_rate(membrane_potential - adaptation)
 
         # Partition firing rate per area
         fr_per_area = self.partition_firing_rates(firing_rate)
 
-        # External feedforward rate that first area receives
+        # If over half the time has passed, present the stimulus
         ext_ff_rate = torch.zeros_like(self.stim)
-        if t > self.time_vec[len(self.time_vec) // 2]:  # if over half the time has passed, present the stimulus
+        if t > self.time_vec[len(self.time_vec) // 2]:
             ext_ff_rate = self.stim
 
         # Compute input current
@@ -666,8 +671,8 @@ class ColumnNetwork(torch.nn.Module):
         delta_adaptation = (-adaptation + self.network_as_area.adaptation_strength *
                             firing_rate) / self.network_as_area.adapt_time_constant
 
-        state = torch.concat((delta_membrane_potential, delta_adaptation))
-        return state.unsqueeze(0)
+        state = torch.concat((delta_membrane_potential, delta_adaptation), dim=1)
+        return state
 
     def diffusion(self, t, y):
         '''
