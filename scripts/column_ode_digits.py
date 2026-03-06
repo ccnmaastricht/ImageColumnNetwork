@@ -23,6 +23,9 @@ from src.utils import *
 
 
 def visualize_feature_maps_and_weights(network, firing_rates, labels, epoch):
+    '''
+    Visualize weights and feature maps during training.
+    '''
     if not os.path.exists('../results/png'):
         os.makedirs('../results/png')
 
@@ -76,7 +79,10 @@ def visualize_feature_maps_and_weights(network, firing_rates, labels, epoch):
     #         plt.close()
 
 def prepare_ds(digits_to_include, padding):
-
+    '''
+    Prepare the sklearn digit dataset by padding the images, flattening
+    images to vectors and splitting the data into train and test sets.
+    '''
     # Load dataset
     digits = datasets.load_digits()
     X = digits.images  # shape: (n_samples, 8, 8)
@@ -97,8 +103,7 @@ def prepare_ds(digits_to_include, padding):
 
     # Train/test split
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.1, shuffle=True
-    )
+        X, y, test_size=0.1, shuffle=True)
 
     # Convert to torch tensors
     X_train = torch.tensor(X_train, dtype=torch.float32)
@@ -109,6 +114,10 @@ def prepare_ds(digits_to_include, padding):
     return X_train, X_test, y_train, y_test
 
 def mask_weights(network):
+    '''
+    Mask all the trainable parameters to make sure no illegal updates
+    can be made.
+    '''
 
     network.areas['0'].input_weights.grad *= network.areas['0'].input_mask
 
@@ -119,6 +128,10 @@ def mask_weights(network):
     #     network.areas[str(area_idx)].lateral_weights.grad *= network.areas[str(area_idx)].lateral_mask
 
 def init_network(nr_inputs, nr_outputs, batch_size, device):
+    '''
+    Initialize the network, the time vector and the initial state that
+    every network simulation should start from.
+    '''
     col_params = load_config('../config/model_params.toml')
 
     network_input = {'nr_areas': 2,
@@ -139,7 +152,10 @@ def init_network(nr_inputs, nr_outputs, batch_size, device):
     return network.to(device), time_vec.to(device), initial_state.to(device)
 
 def run_batch(network, time_vec, initial_state, model_predictions, stims, device):
-
+    '''
+    Runs a batch of images through the network. Returns the model predictions
+    (i.e. the final firing rates of the output columns) and the raw firing rates.
+    '''
     # stim = torch.tensor([[0., 0., 0., 0., 8., 16., 0., 0.],
     #                      [0., 5., 13., 16., 16., 16., 0., 0.],
     #                      [0., 11., 16., 15., 12., 16., 0., 0.],
@@ -199,6 +215,9 @@ def run_batch(network, time_vec, initial_state, model_predictions, stims, device
     return model_predictions, firing_rates
 
 def set_seed(seed):
+    '''
+    Setting the random seed for reproducability.
+    '''
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
@@ -206,6 +225,9 @@ def set_seed(seed):
 def train_digit_classification(device,
                                batch_size=16,
                                nr_epochs=50):
+    '''
+    Train a Column Network to classify handwritten digits.
+    '''
 
     # Get train and test set
     digits_to_include = [0, 1]
@@ -281,7 +303,7 @@ def train_digit_classification(device,
 
             # Visualize results and save current network
             visualize_feature_maps_and_weights(network, firing_rates, y_test, epoch)
-            save_pkl_file('../results/png/network_post_training_epoch_{:02d}.pkl', network)
+            save_pkl_file('../results/png/network_post_training_epoch_{:02d}.pkl'.format(epoch), network)
 
 
 

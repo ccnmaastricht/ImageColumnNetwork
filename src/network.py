@@ -8,6 +8,10 @@ from src.utils import *
 
 
 class ColumnArea(torch.nn.Module):
+    '''
+    Initializes an area of columns along with all the relevant parameters
+    to simulate their state activity over time.
+    '''
 
     def __init__(self, column_parameters, area, num_columns):
         super().__init__()
@@ -191,7 +195,10 @@ class ColumnNetwork(torch.nn.Module):
         self.lateral_mask = torch.tensor(masks['lateral'])
 
     def make_receptive_fields_v1_vanilla(self, fully_connected_input_mask, receptive_field_size=3, stride=1):
-
+        '''
+        Returns receptive field masks for V1 columns. No pre-specified
+        filter shape, i.e. vanilla.
+        '''
         num_input_pops, len_input_image = fully_connected_input_mask.shape
         num_input_cols = num_input_pops // 8  # eight populations = 1 column
         shape_input_image = int(np.sqrt(len_input_image))  # assumes the image shape is perfectly square (x_shape==y_shape)
@@ -234,7 +241,10 @@ class ColumnNetwork(torch.nn.Module):
         return receptive_field_mask_extended * fully_connected_input_mask
 
     def make_receptive_fields_v1_hori_verti(self, fully_connected_input_mask, receptive_field_size=3, stride=1):
-
+        '''
+        Returns receptive field masks for V1 columns. The filter shapes
+        are horizontal and vertical.
+        '''
         num_input_pops, len_input_image = fully_connected_input_mask.shape
         num_input_cols = num_input_pops // 8  # eight populations = 1 column
         shape_input_image = int(np.sqrt(len_input_image))  # assumes the image shape is perfectly square (x_shape==y_shape)
@@ -273,7 +283,10 @@ class ColumnNetwork(torch.nn.Module):
         return receptive_field_mask_extended * fully_connected_input_mask
 
     def make_receptive_fields_v1_pca(self, fully_connected_input_mask, receptive_field_size=3, stride=1):
-
+        '''
+        Returns receptive field masks for V1 columns. The filter shapes
+        are pre-defined and based on the learned weights of a standard nn.
+        '''
         num_input_pops, len_input_image = fully_connected_input_mask.shape
         num_input_cols = num_input_pops // 8  # eight populations = 1 column
         shape_input_image = int(np.sqrt(len_input_image))  # assumes the image shape is perfectly square (x_shape==y_shape)
@@ -315,126 +328,6 @@ class ColumnNetwork(torch.nn.Module):
         # Extent receptive field mask from x_shape=nr_columns to x_shape=nr_populations
         receptive_field_mask_extended = receptive_field_mask.repeat_interleave(8, dim=0)
         return receptive_field_mask_extended * fully_connected_input_mask
-
-    # Not in use right now
-    def make_receptive_fields_v2(self, fully_connected_mask, receptive_field_size=3, stride=1, nr_source_cols_same_rf=1):
-
-        num_target_pops, num_source_pops = fully_connected_mask.shape
-        num_target_cols = num_target_pops // 8  # eight populations = 1 column
-        num_source_cols = num_source_pops // 8
-        size_feature_map = int(np.sqrt(num_source_cols // nr_source_cols_same_rf))
-
-        # Determine how many receptive fields we can have, given the feature map shape, receptive field size and stride
-        nr_receptive_fields = ((size_feature_map - receptive_field_size + 1) // stride) ** 2
-        # Then, determine how many columns will receive the identical receptive field
-        nr_cols_per_receptive_field = num_target_cols // nr_receptive_fields
-
-        # All receptive fields should have the exact same number of target columns
-        assert num_target_cols % nr_receptive_fields == 0, \
-            f"The number of columns in the target area ({num_target_cols}) can not be divided by the number of receptive fields ({nr_receptive_fields})."
-
-        # Loop through the feature map indices to fill in the receptive field mask
-        receptive_field_mask = torch.zeros(num_target_cols, num_source_cols)
-
-        col_idx = 0
-        end = size_feature_map - receptive_field_size + 1
-
-        for i in range(0, end, stride):
-            for j in range(0, end, stride):
-                for k in range(nr_cols_per_receptive_field):  # assign the same receptive field to n columns
-                    image = torch.zeros(size_feature_map, size_feature_map)
-                    image[i:i + receptive_field_size, j:j + receptive_field_size] = 1.0  # set all receptive field indices to 1
-                    flattened_image = image.flatten()
-                    flattened_image_extended = flattened_image.repeat_interleave((nr_source_cols_same_rf), dim=0)
-                    receptive_field_mask[col_idx, :] = flattened_image_extended
-                    col_idx += 1
-
-        # Extent receptive field mask from x_shape=nr_columns to x_shape=nr_populations - and the same for dimension y
-        receptive_field_mask_extended = receptive_field_mask.repeat_interleave((8), dim=0)
-        receptive_field_mask_extended = receptive_field_mask_extended.repeat_interleave((8), dim=1)
-
-        return receptive_field_mask_extended * fully_connected_mask
-
-    # Code for input filters targeting inhibitory populations
-    # def make_receptive_fields_v1_hori_verti(self, fully_connected_input_mask, receptive_field_size=3, stride=1):
-    #
-    #     num_input_pops, len_input_image = fully_connected_input_mask.shape
-    #     num_input_cols = num_input_pops // 8  # eight populations = 1 column
-    #     shape_input_image = int(np.sqrt(len_input_image))  # assumes the image shape is perfectly square (x_shape==y_shape)
-    #
-    #     # Determine how many receptive fields we can have, given the image shape, receptive field size and stride
-    #     nr_receptive_fields = ((shape_input_image - receptive_field_size + 1) // stride)**2
-    #     # Then, determine how many columns will receive the identical receptive field
-    #     nr_cols_per_receptive_field = num_input_cols // nr_receptive_fields
-    #
-    #     # All receptive fields should have the exact same number of target columns
-    #     assert num_input_cols % nr_receptive_fields == 0, \
-    #         f"The number of columns in the first area ({num_input_cols}) can not be divided by the number of receptive fields ({nr_receptive_fields})."
-    #
-    #     # Loop through the image indices to fill in the receptive field mask
-    #     receptive_field_mask = torch.zeros(num_input_cols, len_input_image)
-    #
-    #     col_idx = 0
-    #     end = shape_input_image - receptive_field_size + 1
-    #
-    #     for i in range(0, end, stride):
-    #         for j in range(0, end, stride):
-    #
-    #             # Hyper column: one horizontal and one vertical column
-    #             image = torch.zeros(shape_input_image, shape_input_image)
-    #             image[(i+1):(i-1) + receptive_field_size, j:j + receptive_field_size] = 1.0  # horizontal
-    #             image[(i+0):(i-2) + receptive_field_size, j:j + receptive_field_size] = -1.0
-    #             image[(i+2):(i-0) + receptive_field_size, j:j + receptive_field_size] = -1.0
-    #             receptive_field_mask[col_idx, :] = image.flatten()
-    #             col_idx += 1
-    #
-    #             image = torch.zeros(shape_input_image, shape_input_image)
-    #             image[i:i + receptive_field_size, (j+1):(j-1) + receptive_field_size] = 1.0  # vertical
-    #             image[i:i + receptive_field_size, (j+0):(j-2) + receptive_field_size] = -1.0
-    #             image[i:i + receptive_field_size, (j+2):(j-0) + receptive_field_size] = -1.0
-    #             receptive_field_mask[col_idx, :] = image.flatten()
-    #             col_idx += 1
-    #
-    #     # Extent receptive field mask from x_shape=nr_columns to x_shape=nr_populations
-    #     receptive_field_mask_extended = receptive_field_mask.repeat_interleave(8, dim=0)
-    #     return receptive_field_mask_extended * fully_connected_input_mask
-    #
-    # def _initialize_input_weights(self, model_parameters):
-    #     '''
-    #     Initialize learnable input weights to weight the input going into the first area.
-    #     '''
-    #     first_area = self.areas['0']
-    #
-    #     size_source = self.nr_input_units
-    #     size_target = first_area.num_columns
-    #
-    #     input_init = (torch.tensor(model_parameters['connection_inits']['input']))
-    #     input_init = input_init * first_area.baseline_synaptic_strength * 0.7
-    #     input_init_excitatory = torch.tile(input_init, (size_target, size_source))
-    #
-    #     # std_W = 1.0
-    #     # rand_input_weights = abs(torch.normal(mean=input_init, std=std_W))
-    #
-    #     # Make 3x3 receptive fields
-    #     input_mask = torch.tile(self.input_mask, (size_target, size_source))
-    #     input_mask = self.make_receptive_fields_v1_hori_verti(input_mask)
-    #     first_area.input_mask = abs(input_mask)
-    #
-    #     # Apply receptive field input mask to weights
-    #     input_init_excitatory = input_init_excitatory * input_mask
-    #     input_init_excitatory[input_init_excitatory < 0] = 0  # set everything below zero to zero
-    #     # Also apply receptive field inhibition-targeted connections
-    #     exci_inhi_swapped = torch.zeros(input_init.shape)
-    #     exci_inhi_swapped[2], exci_inhi_swapped[3] = input_init[3], input_init[2]
-    #     exci_inhi_swapped_all_cols = torch.tile(exci_inhi_swapped, (size_target, size_source))
-    #     input_init_inhibition = exci_inhi_swapped_all_cols * (input_mask * -1.0)
-    #     input_init_inhibition[input_init_inhibition < 0] = 0  # set everything below zero to zero
-    #
-    #     # Add excitatory- and inhibitory-targeting weights together to form receptive fields
-    #     # input_weights = input_init_excitatory + input_init_inhibition
-    #     input_weights = input_init_excitatory
-    #     first_area.input_weights = nn.Parameter(input_weights, requires_grad=False) # NOT TRAINING NOW
-
 
     def _initialize_input_weights(self, model_parameters):
         '''
@@ -482,20 +375,11 @@ class ColumnNetwork(torch.nn.Module):
                 rand_ff_weights = rand_ff_weights * area.baseline_synaptic_strength * 0.7  # scale down in case of padding!
 
                 ff_mask = torch.tile(self.feedforward_mask, (size_target, size_source))
-                # # If entire ventral stream
-                # # PS: the number of source columns with the same receptive field should not be hardcoded
-                # if area_idx == '1' or area_idx == '2':
-                #     # Make 3x3 receptive fields
-                #     ff_mask = self.make_receptive_fields_v2(ff_mask, nr_source_cols_same_rf=1)
-                # elif area_idx == '4':
-                #     # Make 2x2 receptive fields
-                #     ff_mask = self.make_receptive_fields_v2(ff_mask, receptive_field_size=2, nr_source_cols_same_rf=1)
                 area.register_buffer('feedforward_mask', ff_mask)
 
                 rand_ff_weights = rand_ff_weights * ff_mask
                 area.feedforward_weights = nn.Parameter(rand_ff_weights, requires_grad=True)
 
-    # Not in use right now
     def _initialize_feedback_weights(self, model_parameters):
         '''
         Initialize the feedback weights between each set of areas as learnable weights.
@@ -533,18 +417,22 @@ class ColumnNetwork(torch.nn.Module):
 
         # std_W = 0.001
         # rand_output_weights = abs(torch.normal(mean=output_init, std=std_W))
-        # rand_output_weights *= rand_output_weights * torch.tile(self.output_mask, (size_source,))
+        # rand_output_weights *= torch.tile(self.output_mask, (size_source,))
 
         self.output_weights = nn.Parameter(output_init, requires_grad=False)  # NOT TRAINING NOW
 
     def _initialize_lateral_weights(self, model_parameters):
-
+        '''
+        Initialize learnable lateral inhibition weights between each
+        set of V1 columns (i.e. together forming a hyper column) and
+        between all the output columns.
+        '''
         for area_idx, area in self.areas.items():
             inner_weights = area.recurrent_weights * area.internal_mask  # set any existing external connectivity to zero
             area.register_buffer('inner_weights', inner_weights)
 
-            # Initialize lateral weights; all the same (860 for V1; 915 for V2)
-            lateral_init = torch.ones((area.num_populations, area.num_populations)) * 0.1 # * 860
+            # Initialize lateral weights (860 for V1; 915 for V2)
+            lateral_init = torch.ones((area.num_populations, area.num_populations)) * 0.1
             lateral_init = lateral_init
 
             # Reshape lateral mask
@@ -562,7 +450,7 @@ class ColumnNetwork(torch.nn.Module):
             area.lateral_mask = lateral_mask
             lateral_weights = lateral_init * lateral_mask
 
-            area.lateral_weights = nn.Parameter(lateral_weights, requires_grad=False)  # NO!
+            area.lateral_weights = nn.Parameter(lateral_weights, requires_grad=False)  # NOT TRAINING NOW
 
     def set_time_vec(self, time_vec):
         '''
@@ -626,7 +514,6 @@ class ColumnNetwork(torch.nn.Module):
             #     feedback_current = torch.matmul(area.feedback_weights, next_area_fr)
 
             # Compute recurrent current
-
             recurrent_current = torch.matmul(fr_per_area[area_idx], area.inner_weights.T)
             lateral_current = torch.matmul(fr_per_area[area_idx], area.lateral_weights.T)
 
@@ -648,13 +535,12 @@ class ColumnNetwork(torch.nn.Module):
         ODE should learn these dynamics and update the weights accordingly.
         '''
 
-        # Prepare the state (membrane, adaptation)
+        # Unpack the state (membrane, adaptation)
         mem_adap_split = state.shape[1] // 2
         membrane_potential, adaptation = state[:, :mem_adap_split], state[:, mem_adap_split:]
 
-        firing_rate = compute_firing_rate(membrane_potential - adaptation)
-
         # Partition firing rate per area
+        firing_rate = compute_firing_rate(membrane_potential - adaptation)
         fr_per_area = self.partition_firing_rates(firing_rate)
 
         # If over half the time has passed, present the stimulus
@@ -679,9 +565,8 @@ class ColumnNetwork(torch.nn.Module):
         Diffusion function used by SDE, noise is only applied
         to membrane potential.
         '''
-        noise_std = 10.0
+        noise_std = 3.0
         g = torch.zeros_like(y)
-        split = (len(y[0]) // 3)
-        g[:split, :] = noise_std
-        g = g.unsqueeze(dim=-1)
+        split = (len(y[0]) // 2)
+        g[:, :split] = noise_std
         return g
