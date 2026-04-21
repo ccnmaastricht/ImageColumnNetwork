@@ -122,10 +122,10 @@ def mask_weights(network):
     network.areas['0'].input_weights.grad *= network.areas['0'].input_mask
 
     for area_idx in range(1, network.nr_areas):  # feedforward weights, skip first area
-        network.areas[str(area_idx)].feedforward_weights.grad *= network.areas[str(area_idx)].feedforward_mask
+        network.areas[str(area_idx)].w_FF.grad *= network.areas[str(area_idx)].feedforward_mask
 
-    # for area_idx in range(network.nr_areas):  # lateral weights
-    #     network.areas[str(area_idx)].lateral_weights.grad *= network.areas[str(area_idx)].lateral_mask
+    for area_idx in range(network.nr_areas):  # lateral weights
+        network.areas[str(area_idx)].lateral_weights.grad *= network.areas[str(area_idx)].lateral_mask
 
 def init_network(nr_inputs, nr_outputs, batch_size, device):
     '''
@@ -190,14 +190,17 @@ def run_batch(network, time_vec, initial_state, model_predictions, stims, device
     ode_output = odeint(network, initial_state, time_vec).to(device)
     mem_adap_split = ode_output.shape[-1] // 2
     firing_rates = compute_firing_rate(ode_output[:, :, :mem_adap_split] - ode_output[:, :, mem_adap_split:])
+
     # # Plot firing rates
-    # firing_rates_plot = firing_rates.squeeze(1).detach().numpy()
+    # firing_rates_plot = firing_rates.detach().cpu().numpy()
     # col_idx = 1024 # 576
-    # for i in range(col_idx, firing_rates_plot.shape[-1] - 8):
-    #     print(i - col_idx)
-    #     plt.plot(firing_rates_plot[:, i])
-    #     plt.plot(firing_rates_plot[:, i+8])
-    #     plt.show()
+    # for i in range(len(stims)):
+    #     print(i)
+    #     for j in range(col_idx, firing_rates_plot.shape[-1] - 8):
+    #         print(j - col_idx)
+    #         plt.plot(firing_rates_plot[:, i, j])
+    #         plt.plot(firing_rates_plot[:, i, j+8])
+    #         plt.show()
 
     # Get the firing rates from the final area columns
     size_last_area = network.nr_columns_per_area[-1]
@@ -242,7 +245,7 @@ def train_digit_classification(device,
     network, time_vec, initial_state = init_network(nr_inputs, len(digits_to_include), batch_size, device)
 
     # # Load in existing network
-    # network = load_pkl_file('../results/__.pkl')
+    # network = load_pkl_file('../results/png/network_post_training_epoch_16.pkl')
 
     # Training
     criterion = nn.CrossEntropyLoss()
@@ -254,6 +257,14 @@ def train_digit_classification(device,
 
         for stims, labels in train_loader:
             start = time.time()
+            optimizer.zero_grad()
+            network.constrain_weights()
+
+            # pprint(labels)
+            # for stim in stims:  # take a peek at the images
+            #     stim = np.array(stim).reshape((10,10))
+            #     plt.imshow(stim, cmap=plt.cm.gray_r, interpolation="nearest")
+            #     plt.show()
 
             # Run the network with the training batch as input
             initial_train = torch.tile(initial_state, (batch_size, 1))
@@ -262,23 +273,22 @@ def train_digit_classification(device,
 
             # Compute loss and backprop
             ce_loss = criterion(model_predictions, labels)
-            one_hot_labels = nn.functional.one_hot(labels, num_classes=len(digits_to_include))
-            mae = torch.mean(abs(model_predictions - (one_hot_labels * 20.0)))
-            suppression = ((1 - one_hot_labels) * model_predictions).mean()
-            loss = ce_loss + (0.1 * suppression)
-            optimizer.zero_grad()
-            loss.backward()
-            mask_weights(network)  # no illegal updates
-            optimizer.step()
 
-            # Clamp the weights to ensure the weights are not below zero after updating (or are not higher than zero)
-            for name, param in network.named_parameters():
-                param.data.clamp_(min=0.0)  # weights can not be negative
+            one_hot_labels = nn.functional.one_hot(labels, num_classes=len(digits_to_include))
+            suppression = ((1 - one_hot_labels) * model_predictions).mean()
+            L2_reg = (network.areas['0'].input_weights ** 2).mean()
+
+            loss = ce_loss + (0.1 * suppression) + (1e-1 * L2_reg)
+
+            loss.backward()
+            optimizer.step()
 
             print('Train loss | {:.5f} | {:.1f}s'.format(loss.item(), time.time() - start))
 
         # Evaluate with test set, after every epoch
         with torch.no_grad():
+            network.constrain_weights()
+
             print('==================== TESTING ====================')
             initial_test = torch.tile(initial_state, (X_test.shape[0], 1))
             model_predictions = torch.zeros(X_test.shape[0], len(digits_to_include))
@@ -291,6 +301,9 @@ def train_digit_classification(device,
             suppression = ((1 - one_hot_labels) * model_predictions).mean()
             loss_supp = test_loss + (0.1 * suppression)
             print('Test loss CE with suppression {:.5f}'.format(loss_supp.item()))
+
+            L2_reg = (network.areas['0'].input_weights ** 2).mean()
+            print('L2 regularization {:.5f}'.format(1e-1 * L2_reg.item()))
 
             test_mae = torch.mean(abs(model_predictions - (one_hot_labels * 20.0)))
             print('Test loss MAE {:.5f}'.format(test_mae.item()))
@@ -318,9 +331,10 @@ if __name__ == '__main__':
 
 '''
 2 digits
-PCA filters
 padding=1
-no lateral weights
+learnable lateral weights
+
+filters from scratch
 
 cross-entropy loss with suppression=0.1
 '''

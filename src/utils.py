@@ -35,10 +35,10 @@ def compute_firing_rate(x):
     a, b, d = 48.0, 981.0, 0.0089  # gain, threshold, noise factor
     x_nom = a * x - b
     exp_input = -d * x_nom
-    # exp_input = soft_clamp(exp_input)
+    exp_input = torch.clamp(exp_input, -50, 50)  # CLAMP
     exp_term = torch.exp(exp_input)
 
-    denom = 1 - exp_term
+    denom = 1 - exp_term + 1e-6  # ADD EPSILON
     x_activ = x_nom / denom
     return x_activ
 

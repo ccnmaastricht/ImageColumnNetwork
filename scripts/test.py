@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 from pprint import pprint
 import torch
 
+from src.utils import *
+
 
 
 def heatmap_model_output():
@@ -381,6 +383,43 @@ def experiment_with_loss_functions():
         # print(torch.mean(abs(preds - targets)))
 
 
+def investigate_trained_model():
+
+    # Load in existing network
+    network = load_pkl_file('../results/png/network_post_training_epoch_04.pkl')
+
+    input_weights = network.areas['0'].input_weights # .detach().cpu().numpy()
+    ff_weights = network.areas['1'].w_FF # .detach().cpu().numpy()
+
+    I = network.areas['0'].I.detach().cpu().numpy()
+    FF = network.areas['1'].FF.detach().cpu().numpy()
+
+    weights_summed = torch.sum(input_weights, dim=1)
+    weight_reshaped = torch.reshape(weights_summed, (weights_summed.shape[0] // 8, 8))
+    how_much_weight_per_column = torch.sum(weight_reshaped, dim=1)
+
+    ff_diff = ff_weights[:8] - ff_weights[8:]
+
+    def visualize_filter(rf_index):
+        index = rf_index * 8 + 2
+        filter = input_weights[index].reshape((10, 10))
+
+        heatmap = plt.imshow(filter, cmap="magma", interpolation="nearest", vmin=5.0, vmax=6.0)
+        plt.colorbar(heatmap)
+        plt.show()
+
+        return filter
+
+    rf0 = visualize_filter(0)
+    rf1 = visualize_filter(1)
+
+    ff = ff_weights[:, 102*8:]
+    stop = 0
+
+
+
 # plot_losses()
-heatmap_model_output()
+# heatmap_model_output()
+
+investigate_trained_model()
 

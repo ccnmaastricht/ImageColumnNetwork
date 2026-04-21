@@ -168,6 +168,8 @@ class ColumnNetwork(torch.nn.Module):
         self._initialize_output_weights(model_parameters)
         self._initialize_lateral_weights(model_parameters)
 
+        self.constrain_weights()
+
     def _initialize_areas(self, model_parameters, network_dict):
         '''
         Initialize the areas as ColumnArea objects.
@@ -354,7 +356,7 @@ class ColumnNetwork(torch.nn.Module):
         first_area.register_buffer('input_mask', input_mask)
 
         rand_input_weights = rand_input_weights * input_mask
-        first_area.input_weights = nn.Parameter(rand_input_weights, requires_grad=True)
+        first_area.w_I = nn.Parameter(rand_input_weights, requires_grad=True)
 
     def _initialize_feedforward_weights(self, model_parameters):
         '''
@@ -378,7 +380,7 @@ class ColumnNetwork(torch.nn.Module):
                 area.register_buffer('feedforward_mask', ff_mask)
 
                 rand_ff_weights = rand_ff_weights * ff_mask
-                area.feedforward_weights = nn.Parameter(rand_ff_weights, requires_grad=True)
+                area.w_FF = nn.Parameter(rand_ff_weights, requires_grad=True)
 
     def _initialize_feedback_weights(self, model_parameters):
         '''
@@ -447,10 +449,10 @@ class ColumnNetwork(torch.nn.Module):
                 lateral_mask = lateral_mask * lateral_hyper_column_mask
 
             # Store mask and weights in area
-            area.lateral_mask = lateral_mask
+            area.register_buffer('lateral_mask', lateral_mask)
             lateral_weights = lateral_init * lateral_mask
 
-            area.lateral_weights = nn.Parameter(lateral_weights, requires_grad=False)  # NOT TRAINING NOW
+            area.w_L = nn.Parameter(lateral_weights, requires_grad=True)
 
     def set_time_vec(self, time_vec):
         '''
@@ -471,7 +473,29 @@ class ColumnNetwork(torch.nn.Module):
         Gets the network's current device, based on the first area's
         feedforward weights.
         '''
-        return self.areas['0'].input_weights.device
+        return self.areas['0'].w_I.device
+
+    def constrain_weights(self):
+        '''
+        Constrain all learnable weights: multiply with corresponding mask
+        to enforce no illegal connections can be used and constrain the
+        weights to be non-negative.
+        '''
+
+        for area_idx, area in self.areas.items():
+            # Input weights
+            if area_idx == '0':
+                input_weights = area.w_I * area.input_mask
+                area.input_weights = torch.relu(input_weights)  # all weights should be non-negative
+
+            # Feedforward weights
+            elif area_idx > '0':
+                ff_weights = area.w_FF * area.feedforward_mask
+                area.feedforward_weights = torch.relu(ff_weights)
+
+            # Lateral weights
+            lat_weights = area.w_L * area.lateral_mask
+            area.lateral_weights = torch.relu(lat_weights)
 
     def partition_firing_rates(self, firing_rate):
         '''
