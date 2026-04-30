@@ -124,3 +124,83 @@ def _initialize_input_weights(self, model_parameters):
     # input_weights = input_init_excitatory + input_init_inhibition
     input_weights = input_init_excitatory
     first_area.input_weights = nn.Parameter(input_weights, requires_grad=False) # NOT TRAINING NOW
+
+
+
+'''
+Visualization 
+'''
+def visualize_feature_maps_and_weights(network, firing_rates, labels, epoch):
+    '''
+    Visualize weights and feature maps during training.
+    '''
+    if not os.path.exists('../results/results_1'):
+        os.makedirs('../results/results_1')
+
+    # Weights
+    for name, param in network.named_parameters():
+        if param.requires_grad:
+            fig, ax = plt.subplots(figsize=(18, 5))
+
+            param_data = param.detach().cpu().numpy()
+            heatmap = ax.imshow(param_data, cmap="magma", interpolation="nearest")
+            fig.colorbar(heatmap, ax=ax)
+            ax.set_title(f"Weight Matrix: {name}")
+
+            clean_name = name.replace('.', '_')
+            plt.savefig('../results/results_1/{}_epoch_{:02d}'.format(clean_name, epoch))
+            plt.close(fig)
+
+    # Feature maps
+    for stim_idx in range(firing_rates.shape[0]):
+        firing_rates_v1 = firing_rates[stim_idx, 500:, :576]
+        firing_rates_v1_mean = torch.mean(firing_rates_v1, dim=0)
+
+        input_current_v2 = network.areas['1'].feedforward_weights * firing_rates_v1_mean
+        column_0 = torch.sum(input_current_v2[:8, :], dim=0)
+        column_1 = torch.sum(input_current_v2[8:, :], dim=0)
+
+        def sum_over_source_columns(x):
+            x_grouped = x.view(-1, 8)
+            return torch.sum(x_grouped, dim=1)
+
+        column_0 = sum_over_source_columns(column_0)
+        column_1 = sum_over_source_columns(column_1)
+
+        column_0_horizontal = column_0[::2].reshape((6, 6))
+        column_0_vertical = column_0[1::2].reshape((6, 6))
+
+        column_1_horizontal = column_1[::2].reshape((6, 6))
+        column_1_vertical = column_1[1::2].reshape((6, 6))
+
+        feature_maps = {
+            "col_0_horizontal": column_0_horizontal,
+            "col_0_vertical": column_0_vertical,
+            "col_1_horizontal": column_1_horizontal,
+            "col_1_vertical": column_1_vertical,
+        }
+
+        for name, fmap in feature_maps.items():
+            heatmap = plt.imshow(fmap.detach().numpy(), cmap="magma", interpolation="nearest", vmin=0.0, vmax=50.0)  # inferno, magma
+            plt.colorbar(heatmap)
+            plt.savefig('../results/results_1/epoch_{:02d}_label_{:1d}_{}_{:02d}'.format(epoch, labels[stim_idx], name, stim_idx))
+            plt.close()
+
+
+
+'''
+Mask weights, now this is done in the forward function
+'''
+def mask_weights(network):
+    '''
+    Mask all the trainable parameters to make sure no illegal updates
+    can be made.
+    '''
+
+    network.areas['0'].input_weights.grad *= network.areas['0'].input_mask
+
+    for area_idx in range(1, network.nr_areas):  # feedforward weights, skip first area
+        network.areas[str(area_idx)].w_FF.grad *= network.areas[str(area_idx)].feedforward_mask
+
+    for area_idx in range(network.nr_areas):  # lateral weights
+        network.areas[str(area_idx)].lateral_weights.grad *= network.areas[str(area_idx)].lateral_mask

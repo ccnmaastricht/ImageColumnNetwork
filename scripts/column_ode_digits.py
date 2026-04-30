@@ -5,6 +5,7 @@ from pprint import pprint
 import pickle
 import random
 import time
+from datetime import datetime
 
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
@@ -22,61 +23,26 @@ from src.utils import *
 
 
 
-def visualize_feature_maps_and_weights(network, firing_rates, labels, epoch):
+
+def set_seed(seed):
     '''
-    Visualize weights and feature maps during training.
+    Setting the random seed for reproducability.
     '''
-    if not os.path.exists('../results/png'):
-        os.makedirs('../results/png')
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
 
-    # Weights
-    for name, param in network.named_parameters():
-        if param.requires_grad:
-            fig, ax = plt.subplots(figsize=(18, 5))
+def make_results_folder():
+    '''
+    Make a folder in ../results to store the training results.
+    '''
+    timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    results_path = f'../results/results_{timestamp}'
 
-            param_data = param.detach().cpu().numpy()
-            heatmap = ax.imshow(param_data, cmap="magma", interpolation="nearest")
-            fig.colorbar(heatmap, ax=ax)
-            ax.set_title(f"Weight Matrix: {name}")
+    if not os.path.exists(results_path):
+        os.makedirs(results_path)
 
-            clean_name = name.replace('.', '_')
-            plt.savefig('../results/png/{}_epoch_{:02d}'.format(clean_name, epoch))
-            plt.close(fig)
-
-    # # Feature maps
-    # for stim_idx in range(firing_rates.shape[0]):
-    #     firing_rates_v1 = firing_rates[stim_idx, 500:, :576]
-    #     firing_rates_v1_mean = torch.mean(firing_rates_v1, dim=0)
-    #
-    #     input_current_v2 = network.areas['1'].feedforward_weights * firing_rates_v1_mean
-    #     column_0 = torch.sum(input_current_v2[:8, :], dim=0)
-    #     column_1 = torch.sum(input_current_v2[8:, :], dim=0)
-    #
-    #     def sum_over_source_columns(x):
-    #         x_grouped = x.view(-1, 8)
-    #         return torch.sum(x_grouped, dim=1)
-    #
-    #     column_0 = sum_over_source_columns(column_0)
-    #     column_1 = sum_over_source_columns(column_1)
-    #
-    #     column_0_horizontal = column_0[::2].reshape((6, 6))
-    #     column_0_vertical = column_0[1::2].reshape((6, 6))
-    #
-    #     column_1_horizontal = column_1[::2].reshape((6, 6))
-    #     column_1_vertical = column_1[1::2].reshape((6, 6))
-    #
-    #     feature_maps = {
-    #         "col_0_horizontal": column_0_horizontal,
-    #         "col_0_vertical": column_0_vertical,
-    #         "col_1_horizontal": column_1_horizontal,
-    #         "col_1_vertical": column_1_vertical,
-    #     }
-    #
-    #     for name, fmap in feature_maps.items():
-    #         heatmap = plt.imshow(fmap.detach().numpy(), cmap="magma", interpolation="nearest", vmin=0.0, vmax=50.0)  # inferno, magma
-    #         plt.colorbar(heatmap)
-    #         plt.savefig('../results/png/epoch_{:02d}_label_{:1d}_{}_{:02d}'.format(epoch, labels[stim_idx], name, stim_idx))
-    #         plt.close()
+    return results_path
 
 def prepare_ds(digits_to_include, padding):
     '''
@@ -113,20 +79,6 @@ def prepare_ds(digits_to_include, padding):
 
     return X_train, X_test, y_train, y_test
 
-def mask_weights(network):
-    '''
-    Mask all the trainable parameters to make sure no illegal updates
-    can be made.
-    '''
-
-    network.areas['0'].input_weights.grad *= network.areas['0'].input_mask
-
-    for area_idx in range(1, network.nr_areas):  # feedforward weights, skip first area
-        network.areas[str(area_idx)].w_FF.grad *= network.areas[str(area_idx)].feedforward_mask
-
-    for area_idx in range(network.nr_areas):  # lateral weights
-        network.areas[str(area_idx)].lateral_weights.grad *= network.areas[str(area_idx)].lateral_mask
-
 def init_network(nr_inputs, nr_outputs, batch_size, device):
     '''
     Initialize the network, the time vector and the initial state that
@@ -156,32 +108,6 @@ def run_batch(network, time_vec, initial_state, model_predictions, stims, device
     Runs a batch of images through the network. Returns the model predictions
     (i.e. the final firing rates of the output columns) and the raw firing rates.
     '''
-    # stim = torch.tensor([[0., 0., 0., 0., 8., 16., 0., 0.],
-    #                      [0., 5., 13., 16., 16., 16., 0., 0.],
-    #                      [0., 11., 16., 15., 12., 16., 0., 0.],
-    #                      [0., 3., 8., 0., 8., 16., 0., 0.],
-    #                      [0., 0., 0., 0., 8., 16., 3., 0.],
-    #                      [0., 0., 0., 0., 8., 16., 4., 0.],
-    #                      [0., 0., 0., 0., 7., 16., 7., 0.],
-    #                      [0., 0., 0., 0., 10., 16., 8., 0.]]).reshape(64)
-    # stim = torch.tensor([[0., 0., 4., 13., 14., 8., 0., 0.],
-    #                      [0., 3., 14., 3., 1., 16., 3., 0.],
-    #                      [0., 7., 9., 0., 0., 14., 6., 0.],
-    #                      [0., 8., 4., 0., 0., 16., 4., 0.],
-    #                      [0., 8., 6., 0., 0., 16., 0., 0.],
-    #                      [0., 3., 11., 0., 1., 14., 0., 0.],
-    #                      [0., 0., 12., 4., 6., 11., 0., 0.],
-    #                      [0., 0., 5., 16., 14., 1., 0., 0.]]).reshape(64)
-    # stim = torch.tensor([[0., 10., 0., 0., 8., 16., 0., 0.],
-    #                      [16., 16., 16., 16., 16., 16., 0., 0.],
-    #                      [0., 10., 0., 15., 12., 16., 0., 0.],
-    #                      [0., 3., 8., 0., 8., 16., 0., 0.],
-    #                      [0., 0., 0., 0., 8., 16., 3., 0.],
-    #                      [0., 0., 0., 0., 8., 16., 4., 0.],
-    #                      [0., 0., 0., 0., 7., 16., 7., 0.],
-    #                      [0., 0., 0., 0., 10., 16., 8., 0.]]).reshape(64)
-    # stim_as_image = stim.reshape((10, 10))
-
     # Set image as stimulus
     stims = stims.to(device)
     network.set_stim(stims)
@@ -193,7 +119,7 @@ def run_batch(network, time_vec, initial_state, model_predictions, stims, device
 
     # # Plot firing rates
     # firing_rates_plot = firing_rates.detach().cpu().numpy()
-    # col_idx = 1024 # 576
+    # col_idx = 1024
     # for i in range(len(stims)):
     #     print(i)
     #     for j in range(col_idx, firing_rates_plot.shape[-1] - 8):
@@ -217,23 +143,21 @@ def run_batch(network, time_vec, initial_state, model_predictions, stims, device
 
     return model_predictions, firing_rates
 
-def set_seed(seed):
-    '''
-    Setting the random seed for reproducability.
-    '''
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
-
-def train_digit_classification(device,
+def train_digit_classification(digits_to_include,
+                               device,
                                batch_size=16,
-                               nr_epochs=50):
+                               nr_epochs=50,
+                               lr=1e-2,
+                               lambda_suppression=1e-1,
+                               lambda_magnitude=1e-2,
+                               lambda_ei=1e+0):
     '''
     Train a Column Network to classify handwritten digits.
     '''
+    # Make results folder
+    results_path = make_results_folder()
 
     # Get train and test set
-    digits_to_include = [0, 1]
     X_train, X_test, y_train, y_test = prepare_ds(digits_to_include, padding=1)
     nr_inputs = X_train.shape[1]
 
@@ -245,11 +169,11 @@ def train_digit_classification(device,
     network, time_vec, initial_state = init_network(nr_inputs, len(digits_to_include), batch_size, device)
 
     # # Load in existing network
-    # network = load_pkl_file('../results/png/network_post_training_epoch_16.pkl')
+    # network = load_pkl_file('../results/digits_2_3/network_post_training_epoch_49.pkl')
 
     # Training
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(network.parameters(), lr=1e-2)
+    optimizer = optim.Adam(network.parameters(), lr=lr)
 
     # Training loop
     for epoch in range(0, nr_epochs):
@@ -272,13 +196,30 @@ def train_digit_classification(device,
             model_predictions, _ = run_batch(network, time_vec, initial_train, model_predictions, stims, device)
 
             # Compute loss and backprop
-            ce_loss = criterion(model_predictions, labels)
+            unique_labels, mapped_labels = torch.unique(labels, return_inverse=True)
+            ce_loss = criterion(model_predictions, mapped_labels)
 
-            one_hot_labels = nn.functional.one_hot(labels, num_classes=len(digits_to_include))
+            one_hot_labels = nn.functional.one_hot(mapped_labels, num_classes=len(digits_to_include))
             suppression = ((1 - one_hot_labels) * model_predictions).mean()
             L2_reg = (network.areas['0'].input_weights ** 2).mean()
 
-            loss = ce_loss + (0.1 * suppression) + (1e-1 * L2_reg)
+            # >>> Compute E/I ratio
+            W_in = network.areas['0'].input_weights
+            num_columns = W_in.shape[0] // 8
+            W_in_reshaped = W_in.view(num_columns, 8, -1)
+
+            W_E = W_in_reshaped[:, 2, :]  # (columns, source)
+            W_I = W_in_reshaped[:, 3, :]
+
+            E_drive = W_E.abs().sum(dim=1)
+            I_drive = W_I.abs().sum(dim=1)
+
+            ratio = E_drive / (E_drive + I_drive + 1e-6)
+            # ei_loss = (ratio - 0.61).sum()
+            ei_loss = (ratio - 0.61).pow(2).sum()
+            # <<<
+
+            loss = ce_loss + (lambda_suppression * suppression) + (lambda_magnitude * L2_reg) + (lambda_ei * ei_loss)
 
             loss.backward()
             optimizer.step()
@@ -294,16 +235,19 @@ def train_digit_classification(device,
             model_predictions = torch.zeros(X_test.shape[0], len(digits_to_include))
             model_predictions, firing_rates = run_batch(network, time_vec, initial_test, model_predictions, X_test, device)
 
-            test_loss = criterion(model_predictions, y_test)
+            _, mapped_test_labels = torch.unique(y_test, return_inverse=True)
+            test_loss = criterion(model_predictions, mapped_test_labels)
             print('Test loss CE {:.5f}'.format(test_loss.item()))
 
-            one_hot_labels = nn.functional.one_hot(y_test, num_classes=len(digits_to_include))
+            one_hot_labels = nn.functional.one_hot(mapped_test_labels, num_classes=len(digits_to_include))
             suppression = ((1 - one_hot_labels) * model_predictions).mean()
-            loss_supp = test_loss + (0.1 * suppression)
-            print('Test loss CE with suppression {:.5f}'.format(loss_supp.item()))
+            loss_supp = lambda_suppression * suppression
+            print('Suppression {:.5f}'.format(loss_supp.item()))
 
             L2_reg = (network.areas['0'].input_weights ** 2).mean()
-            print('L2 regularization {:.5f}'.format(1e-1 * L2_reg.item()))
+            print('L2 regularization {:.5f}'.format(lambda_magnitude * L2_reg.item()))
+
+            print('E/I ratio {:.5f}'.format(lambda_ei * ei_loss))
 
             test_mae = torch.mean(abs(model_predictions - (one_hot_labels * 20.0)))
             print('Test loss MAE {:.5f}'.format(test_mae.item()))
@@ -314,28 +258,20 @@ def train_digit_classification(device,
             print('Model predictions and true labels')
             print(torch.concat((model_predictions, y_test.unsqueeze(1)), dim=-1))
 
-            # Visualize results and save current network
-            visualize_feature_maps_and_weights(network, firing_rates, y_test, epoch)
-            save_pkl_file('../results/png/network_post_training_epoch_{:02d}.pkl'.format(epoch), network)
+            # Save current network
+            save_pkl_file('{}/network_post_training_epoch_{:02d}.pkl'.format(results_path, epoch), network)
 
 
 
 
 
 if __name__ == '__main__':
-    device = torch.device('mps')
+
     seed = 1
-
     set_seed(seed)
-    train_digit_classification(device)
 
-'''
-2 digits
-padding=1
-learnable lateral weights
+    digits_to_include = [0, 1, 2, 3]
+    device = torch.device('mps')
 
-filters from scratch
-
-cross-entropy loss with suppression=0.1
-'''
+    train_digit_classification(digits_to_include, device, batch_size=32, nr_epochs=100)
 
