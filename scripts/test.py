@@ -166,13 +166,6 @@ def heatmap_model_output():
             print(i)
             pprint(digits_0123[i])
 
-    digits_0123[2, :] = [0., 0., 0., 0., 1.]
-    digits_0123[38, :] = [0., 0., 0., 0., 1.]
-    labels = torch.tensor(digits_0123[:, 4:].T, dtype=torch.long).squeeze(0)
-    model_preds = torch.tensor(digits_0123[:, :4])
-    criterion = torch.nn.CrossEntropyLoss()
-    print(criterion(model_preds, labels))
-
     # Confusion matrix
     cm = confusion_matrix(y_true, y_pred)
 
@@ -338,7 +331,7 @@ def experiment_with_loss_functions():
 def investigate_trained_model():
 
     # Load in existing network
-    network = load_pkl_file('../results/digits_2_3/network_post_training_epoch_49.pkl')
+    network = load_pkl_file('../results/10_digits!/network_post_training_epoch_204.pkl')
 
     input_weights = network.areas['0'].input_weights.detach().cpu().numpy()
     # ff_weights = network.areas['1'].feedforward_weights # .detach().cpu().numpy()
@@ -348,16 +341,16 @@ def investigate_trained_model():
     #
     # weights_summed = torch.sum(input_weights, dim=1)
     # weight_reshaped = torch.reshape(weights_summed, (weights_summed.shape[0] // 8, 8)).detach().cpu().numpy()
-    # ei_ratio = weight_reshaped[:, 2] / (weight_reshaped[:, 2] + weight_reshaped[:, 3])
-    # ei_ratio_pow = torch.tensor(ei_ratio - 0.61).pow(2)
-    # ei_ratio_min = torch.tensor(ei_ratio - 0.61)
-    # how_much_weight_per_column = torch.sum(weight_reshaped, dim=1).detach().cpu().numpy()
-    #
-    # ff_diff = ff_weights[:8] - ff_weights[8:]
 
     def visualize_filter(rf_index):
-        index = rf_index * 8 + 2
-        filter = input_weights[index].reshape((10, 10))
+        # Excitatory-targeting
+        index_ex = rf_index * 8 + 2
+        filter_ex = input_weights[index_ex].reshape((10, 10))
+        # Inhibitory-targeting
+        index_in = rf_index * 8 + 3
+        filter_in = input_weights[index_in].reshape((10, 10))
+
+        filter = filter_ex - filter_in
 
         heatmap = plt.imshow(filter, cmap="magma", interpolation="nearest", vmin=0.0, vmax=10.0)
         plt.colorbar(heatmap)
@@ -375,7 +368,7 @@ def investigate_trained_model():
 
 
 # plot_losses()
-heatmap_model_output()
+# heatmap_model_output()
 
-# investigate_trained_model()
+investigate_trained_model()
 

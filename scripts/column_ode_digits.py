@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 from pprint import pprint
 import pickle
 import random
@@ -9,6 +10,7 @@ from datetime import datetime
 
 from sklearn import datasets
 from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 
 import torch.nn as nn
 import torch.optim as optim
@@ -103,6 +105,32 @@ def init_network(nr_inputs, nr_outputs, batch_size, device):
     network.time_vec = time_vec
     return network.to(device), time_vec.to(device), initial_state.to(device)
 
+def heatmap_model_output(model_preds):
+
+    y_true = model_preds[:, -1:]
+    y_pred = np.argmax(model_preds[:, :-1], axis=1)
+
+    # Confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+
+    ConfusionMatrixDisplay(cm).plot(cmap="magma")
+    plt.title("Confusion Matrix")
+    plt.show()
+
+    # Activations heatmap
+    logits = model_preds[:, :-1]
+    labels = model_preds[:, -1]
+
+    # sort by label
+    sorted_idx = labels.argsort()
+    logits_sorted = logits[sorted_idx]
+
+    plt.figure(figsize=(5, 10))
+    sns.heatmap(logits_sorted.numpy(), cmap="magma", vmax=20.0)
+    plt.xlabel("Class")
+    plt.ylabel("Sample (sorted by label)")
+    plt.show()
+
 def run_batch(network, time_vec, initial_state, model_predictions, stims, device):
     '''
     Runs a batch of images through the network. Returns the model predictions
@@ -161,6 +189,12 @@ def train_digit_classification(digits_to_include,
     X_train, X_test, y_train, y_test = prepare_ds(digits_to_include, padding=1)
     nr_inputs = X_train.shape[1]
 
+    # for i, stim in enumerate(X_train):  # take a peek at the images
+    #     print(y_train[i].item())
+    #     stim = np.array(stim).reshape((10,10))
+    #     plt.imshow(stim, cmap=plt.cm.gray_r, interpolation="nearest")
+    #     plt.show()
+
     # DataLoader for train set
     train_ds = TensorDataset(X_train, y_train)
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, drop_last=True)
@@ -169,7 +203,7 @@ def train_digit_classification(digits_to_include,
     network, time_vec, initial_state = init_network(nr_inputs, len(digits_to_include), batch_size, device)
 
     # # Load in existing network
-    # network = load_pkl_file('../results/digits_2_3/network_post_training_epoch_49.pkl')
+    # network = load_pkl_file('../results/10_digits!/network_post_training_epoch_00.pkl')
 
     # Training
     criterion = nn.CrossEntropyLoss()
@@ -183,12 +217,6 @@ def train_digit_classification(digits_to_include,
             start = time.time()
             optimizer.zero_grad()
             network.constrain_weights()
-
-            # pprint(labels)
-            # for stim in stims:  # take a peek at the images
-            #     stim = np.array(stim).reshape((10,10))
-            #     plt.imshow(stim, cmap=plt.cm.gray_r, interpolation="nearest")
-            #     plt.show()
 
             # Run the network with the training batch as input
             initial_train = torch.tile(initial_state, (batch_size, 1))
@@ -247,7 +275,7 @@ def train_digit_classification(digits_to_include,
             L2_reg = (network.areas['0'].input_weights ** 2).mean()
             print('L2 regularization {:.5f}'.format(lambda_magnitude * L2_reg.item()))
 
-            print('E/I ratio {:.5f}'.format(lambda_ei * ei_loss))
+            # print('E/I ratio {:.5f}'.format(lambda_ei * ei_loss))
 
             test_mae = torch.mean(abs(model_predictions - (one_hot_labels * 20.0)))
             print('Test loss MAE {:.5f}'.format(test_mae.item()))
@@ -256,7 +284,8 @@ def train_digit_classification(digits_to_include,
             print('Test accuracy {:.2f}'.format(test_acc))
 
             print('Model predictions and true labels')
-            print(torch.concat((model_predictions, y_test.unsqueeze(1)), dim=-1))
+            # heatmap_model_output(torch.concat((model_predictions, y_test.unsqueeze(1)), dim=-1))
+            # print(torch.concat((model_predictions, y_test.unsqueeze(1)), dim=-1))
 
             # Save current network
             save_pkl_file('{}/network_post_training_epoch_{:02d}.pkl'.format(results_path, epoch), network)
@@ -270,8 +299,8 @@ if __name__ == '__main__':
     seed = 1
     set_seed(seed)
 
-    digits_to_include = [0, 1, 2, 3]
+    digits_to_include = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     device = torch.device('mps')
 
-    train_digit_classification(digits_to_include, device, batch_size=32, nr_epochs=100)
+    train_digit_classification(digits_to_include, device, batch_size=64, nr_epochs=200)
 
